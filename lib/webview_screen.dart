@@ -28,6 +28,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   bool   _processingQueue = false;
   final  List<Map<String, dynamic>> _notificationQueue = [];
 
+  static const _alarmChannel = MethodChannel('aainik/alarm');
+
   @override
   void initState() {
     super.initState();
@@ -307,9 +309,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         final time = entry['time'] as String?;
         if (time == null || time.isEmpty) continue;
         await _scheduleAutoTask(
-           taskPrefix: 'ego_auto_',
+          taskPrefix: 'ego_auto_',
           time: time,
-          inputData: config,
         );
         debugPrint('[FlutterBridge] Scheduled Ego task at $time');
       }
@@ -322,47 +323,36 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         await _scheduleAutoTask(
           taskPrefix: 'josh_auto_',
           time: time,
-          inputData: config,
         );
         debugPrint('[FlutterBridge] Scheduled Josh task at $time');
       }
     }
   }
+
   Future<void> _scheduleAutoTask({
     required String taskPrefix,
     required String time,
-    required Map<String, dynamic> inputData,
   }) async {
-    final now   = DateTime.now();
     final parts = time.split(':');
     if (parts.length != 2) return;
-
-    final hour   = int.tryParse(parts[0]) ?? 0;
-    final minute = int.tryParse(parts[1]) ?? 0;
-
-    // Target = today at scheduled time, or tomorrow if that's already passed
-    var target = DateTime(now.year, now.month, now.day, hour, minute, 0);
-    if (!target.isAfter(now.add(const Duration(minutes: 1)))) {
-      target = target.add(const Duration(days: 1));
-    }
-
-    // Determine alarm ID from task type + time
-    final isEgo  = taskPrefix.contains('ego');
-    final alarmId= isEgo ? AlarmIds.forEgo(time) : AlarmIds.forJosh(time);
+    final hour    = int.tryParse(parts[0]) ?? 0;
+    final minute  = int.tryParse(parts[1]) ?? 0;
+    final isEgo   = taskPrefix.contains('ego');
+    final alarmId = isEgo ? AlarmIds.forEgo(time) : AlarmIds.forJosh(time);
 
     try {
-      final channel = const MethodChannel('aainik/alarm');
-      await channel.invokeMethod('schedule', {
-        'hour': hour,
-        'minute': minute,
+      await _alarmChannel.invokeMethod('schedule', {
+        'hour':    hour,
+        'minute':  minute,
         'alarmId': alarmId,
-        'isEgo': isEgo,
+        'isEgo':   isEgo,
       });
-      debugPrint('[FlutterBridge] Alarm $alarmId set for ${isEgo ? 'Ego' : 'Josh'} at $target');
+      debugPrint('[FlutterBridge] Native alarm $alarmId set for ${isEgo ? 'Ego' : 'Josh'} at $time');
     } catch (e) {
       debugPrint('[FlutterBridge] scheduleAutoTask error: $e');
     }
   }
+
   Future<void> _cancelAllAutoTasks() async {
     try {
       // Only cancel the alarm IDs we actually scheduled — NOT a 2880-call loop
@@ -370,15 +360,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       final egoTimes  = schedule['ego']  ?? [];
       final joshTimes = schedule['josh'] ?? [];
 
-      final channel = const MethodChannel('aainik/alarm');
       for (final time in egoTimes) {
-        await channel.invokeMethod('cancel', {
+        await _alarmChannel.invokeMethod('cancel', {
           'alarmId': AlarmIds.forEgo(time),
           'isEgo': true,
         });
       }
       for (final time in joshTimes) {
-        await channel.invokeMethod('cancel', {
+        await _alarmChannel.invokeMethod('cancel', {
           'alarmId': AlarmIds.forJosh(time),
           'isEgo': false,
         });
