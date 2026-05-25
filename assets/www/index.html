@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Aainik" />
+  <title>Aainik — Flagship</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,300&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Account 3: Chart.js for analytics charts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+  <!-- Account 5: Capacitor runtime — auto-injected by native build; no-op in browser -->
+  <script>
+    // Detect if running inside Capacitor native APK
+    window._isFlutterApp = !!(window.flutter_inappwebview);
+    window._isCapacitorApp = (window.location.protocol === 'capacitor:' ||
+                               (typeof window.Capacitor !== 'undefined' &&
+                                window.Capacitor.isNativePlatform &&
+                                window.Capacitor.isNativePlatform()));
+    if (window._isCapacitorApp) {
+      document.documentElement.classList.add('capacitor-native');
+    }
+  </script>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════
+       SPLASH SCREEN — Premium Flagship Launch
+  ═══════════════════════════════════════════════ -->
+  <div id="splash-screen">
+    <div class="splash-logo-wrap">
+      <img src="icons/icon-512.png" class="splash-logo" alt="Aainik" />
+      <div class="splash-logo-ring"></div>
+      <div class="splash-logo-ring2"></div>
+    </div>
+    <div class="splash-app-name">Aainik</div>
+    <div class="splash-divider"></div>
+    <div class="splash-tagline">
+      I will show you Aaina
+      <span class="tag-bullet">✦</span>
+      Track U
+      <span class="tag-bullet">✦</span>
+      Scold U
+      <span class="tag-bullet">✦</span>
+      Motivate U
+    </div>
+    <div class="splash-loader">
+      <div class="splash-dot"></div>
+      <div class="splash-dot"></div>
+      <div class="splash-dot"></div>
+    </div>
+  </div>
+  <script>
+    // Remove splash from DOM after animation completes
+    setTimeout(function() {
+      var s = document.getElementById('splash-screen');
+      if (s) { s.style.display = 'none'; }
+    }, 3700);
+  </script>
+
+  <!-- ═══════════════════════════════════════════════
+       SCREEN: TODAY (default)
+       Built by: Account 1
+  ═══════════════════════════════════════════════ -->
+  <div id="screen-today" class="screen active">
+    <div class="screen-header">
+      <div class="header-left">
+        <div class="today-brand">
+          <img src="icons/icon-192.png" class="brand-logo" alt="Aainik" />
+          <div class="brand-text-wrap">
+            <h1 class="app-title">Aainik</h1>
+            <span class="brand-tagline">Track U · Scold U · Motivate U</span>
+          </div>
+        </div>
+        <span class="header-date" id="today-date"></span>
+      </div>
+      <div class="header-right">
+        <div class="streak-badge" id="streak-badge">
+          <span class="streak-fire">🔥</span>
+          <span id="streak-count">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="today-progress-wrap">
+      <div class="today-progress-bar">
+        <div class="today-progress-fill" id="today-progress-fill"></div>
+      </div>
+      <div class="today-progress-label" id="today-progress-label">0/0 tasks — 0%</div>
+    </div>
+
+    <!-- Yesterday's misses (shown if any) -->
+    <div id="yesterday-misses" class="yesterday-misses hidden"></div>
+
+    <!-- Search bar -->
+    <div class="search-wrap" id="search-wrap">
+      <input type="search" id="task-search" class="search-input"
+             placeholder="🔍 Task search karo..."
+             oninput="filterTaskSearch(this.value)" />
+    </div>
+
+    <!-- Task list grouped by category -->
+    <div class="task-list-scroll">
+      <div id="today-task-list" class="task-list"></div>
+      <div id="today-empty" class="empty-state hidden">
+        <div class="empty-icon">📋</div>
+        <p>Koi task nahi hai aaj ke liye</p>
+        <p class="empty-sub">CATEGORIES mein jaake tasks add karo</p>
+      </div>
+    </div>
+
+    <!-- Sort controls -->
+    <div class="sort-bar">
+      <span class="sort-label">Sort:</span>
+      <button class="sort-btn active" data-sort="time" onclick="setSortOrder('time')">Time</button>
+      <button class="sort-btn" data-sort="priority" onclick="setSortOrder('priority')">Priority</button>
+      <button class="sort-btn" data-sort="category" onclick="setSortOrder('category')">Category</button>
+    </div>
+
+    <!-- FAB: Quick add task -->
+    <button class="fab" onclick="openQuickAddTask()" title="Task add karo">+</button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       SCREEN: CATEGORIES
+       Built by: Account 1
+  ═══════════════════════════════════════════════ -->
+  <div id="screen-categories" class="screen">
+    <div class="screen-header">
+      <h1 class="screen-title">Categories</h1>
+      <button class="header-btn" onclick="openAddCategory()">+ Category</button>
+    </div>
+    <div class="category-list-scroll">
+      <div id="category-list"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       SCREEN: PROGRESS
+       Built by: Account 3 (Deep Analytics Engine)
+       Replaces Account 1's basic score display
+  ═══════════════════════════════════════════════ -->
+  <div id="screen-progress" class="screen">
+    <div class="screen-header">
+      <h1 class="screen-title">Progress</h1>
+      <div class="progress-header-actions">
+        <button class="header-btn-sm" id="btn-export-report" onclick="exportReport()">📋 Export</button>
+        <button class="header-btn-sm" id="btn-copy-report" onclick="copyReport()">📄 Copy</button>
+      </div>
+    </div>
+
+    <!-- Report Type Tabs -->
+    <div class="report-tabs">
+      <button class="report-tab active" data-tab="daily"   onclick="switchReportTab('daily')">Daily</button>
+      <button class="report-tab"        data-tab="weekly"  onclick="switchReportTab('weekly')">Weekly</button>
+      <button class="report-tab"        data-tab="overall" onclick="switchReportTab('overall')">Overall</button>
+    </div>
+
+    <!-- Date navigation (Daily tab only) -->
+    <div class="date-nav" id="date-nav">
+      <button class="date-nav-btn" onclick="progressNavDate(-1)">‹</button>
+      <span class="date-nav-label" id="date-nav-label"></span>
+      <button class="date-nav-btn" onclick="progressNavDate(1)" id="date-nav-next">›</button>
+    </div>
+
+    <!-- Scrollable report content -->
+    <div class="report-scroll">
+
+      <!-- ── DAILY REPORT ── -->
+      <div id="tab-daily" class="report-tab-content">
+        <!-- Score hero -->
+        <div class="report-hero" id="daily-hero"></div>
+        <!-- Category breakdown -->
+        <div class="report-section-title">Category Breakdown</div>
+        <div id="daily-category-breakdown"></div>
+        <!-- Insights panel -->
+        <div class="report-section-title" id="daily-insights-title" style="display:none">💡 Insights</div>
+        <div class="insights-panel" id="daily-insights"></div>
+        <!-- Talk to Coach CTA (Account 4 wires this up) -->
+        <div id="daily-coach-cta" class="coach-cta hidden">
+          <button class="btn-coach-cta" onclick="showScreen('coach')">🧠 Ego se baat karo</button>
+        </div>
+      </div>
+
+      <!-- ── WEEKLY REPORT ── -->
+      <div id="tab-weekly" class="report-tab-content hidden">
+        <!-- Weekly summary hero -->
+        <div class="report-hero" id="weekly-hero"></div>
+        <!-- 7-day trend chart -->
+        <div class="report-section-title">7-Day Score Trend</div>
+        <div class="chart-wrap">
+          <canvas id="chart-weekly-trend" height="180"></canvas>
+        </div>
+        <!-- Category performance table -->
+        <div class="report-section-title">Category Performance</div>
+        <div id="weekly-category-table"></div>
+        <!-- Pattern detection -->
+        <div class="report-section-title" id="weekly-patterns-title" style="display:none">🔍 Patterns Detected</div>
+        <div class="patterns-panel" id="weekly-patterns"></div>
+        <!-- Best/worst tasks -->
+        <div class="report-section-title">Task Rankings</div>
+        <div id="weekly-task-rankings"></div>
+      </div>
+
+      <!-- ── OVERALL REPORT ── -->
+      <div id="tab-overall" class="report-tab-content hidden">
+        <!-- Overall hero stats -->
+        <div class="report-hero" id="overall-hero"></div>
+        <!-- 30-day trend chart -->
+        <div class="report-section-title">30-Day Score Trend</div>
+        <div class="chart-wrap">
+          <canvas id="chart-overall-trend" height="180"></canvas>
+        </div>
+        <!-- Category bar chart -->
+        <div class="report-section-title">Category Comparison (All Time)</div>
+        <div class="chart-wrap">
+          <canvas id="chart-category-bar" height="200"></canvas>
+        </div>
+        <!-- Heatmap calendar -->
+        <div class="report-section-title">Activity Calendar</div>
+        <div class="heatmap-wrap" id="heatmap-calendar"></div>
+        <!-- Per-task all-time breakdown -->
+        <div class="report-section-title">Task-Level All-Time Stats</div>
+        <div id="overall-task-stats"></div>
+        <!-- Milestones -->
+        <div class="report-section-title">🏆 Milestones</div>
+        <div id="milestone-tracker"></div>
+        <!-- Streak history -->
+        <div class="report-section-title">🔥 Streak History</div>
+        <div id="streak-history-panel"></div>
+      </div>
+
+    </div><!-- /report-scroll -->
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       SCREEN: COACH
+       Built by: Account 4 (AI Coach + Gamification)
+  ═══════════════════════════════════════════════ -->
+  <div id="screen-coach" class="screen">
+    <div class="screen-header">
+      <h1 class="screen-title">AI Coach</h1>
+      <div class="coach-header-actions">
+        <button class="header-btn-sm" id="btn-personality-toggle" onclick="cyclePersonality()" title="Change Ego personality">🔥 Beast</button>
+        <button class="header-btn-sm" onclick="clearActiveCoachConversations()">🗑️</button>
+      </div>
+    </div>
+
+    <!-- ── TAB SELECTOR ── -->
+    <div class="coach-tabs">
+      <button class="coach-tab active" id="tab-ego-btn" onclick="switchCoachTab('ego')">🧠 Tera-Ego</button>
+      <button class="coach-tab" id="tab-josh-btn" onclick="switchCoachTab('josh')">💪 Tera-Josh</button>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         TERA-EGO PANEL
+    ═══════════════════════════════════════ -->
+    <div id="coach-panel-ego" class="coach-panel">
+
+      <!-- No API key warning -->
+      <div id="coach-no-key-banner" class="coach-no-key hidden">
+        <p>⚙️ Gemini API key set nahi hai!</p>
+        <button class="btn-primary" onclick="showScreen('settings'); scrollToCoachConfig()">Settings mein Set Karo</button>
+      </div>
+
+      <!-- Level + badge strip -->
+      <div class="level-strip" id="level-strip"></div>
+
+      <div class="personality-chips">
+        <button class="p-chip" data-mode="gentle"   onclick="setPersonality('gentle')">🕊️ Gentle</button>
+        <button class="p-chip" data-mode="balanced" onclick="setPersonality('balanced')">⚖️ Balanced</button>
+        <button class="p-chip active" data-mode="beast" onclick="setPersonality('beast')">🔥 Beast</button>
+      </div>
+
+      <!-- Chat messages container -->
+      <div class="coach-chat-wrap" id="coach-chat-wrap">
+        <div id="coach-messages" class="coach-messages"></div>
+        <div id="coach-typing" class="coach-typing hidden">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="coach-actions">
+        <button class="btn-primary coach-talk-btn" id="btn-talk-coach" onclick="talkToCoach()">
+          🧠 Ego se Baat Karo
+        </button>
+        <button class="btn-secondary coach-reanalyze-btn" id="btn-reanalyze" onclick="reanalyzeCoach()" style="display:none">
+          🔄 Re-analyze
+        </button>
+      </div>
+
+      <!-- ── EGO AI: SCORE QUERY BUTTONS ── -->
+      <div class="score-query-section">
+        <div class="score-query-title">📊 Score Check Karo</div>
+        <div class="score-query-desc">Apna score ask karo — Ego bilkul seedha reality check dega</div>
+        <div class="score-query-btns">
+          <button class="btn-score-query" id="btn-score-daily" onclick="askScoreQuery('daily')">
+            📅 Aaj ka Score
+          </button>
+          <button class="btn-score-query" id="btn-score-weekly" onclick="askScoreQuery('weekly')">
+            📆 Weekly Score
+          </button>
+          <button class="btn-score-query" id="btn-score-overall" onclick="askScoreQuery('overall')">
+            🏆 Overall Score
+          </button>
+        </div>
+      </div>
+
+      <!-- Custom Manual Report Section -->
+      <div class="custom-report-section">
+        <div class="custom-report-header" onclick="toggleCustomReport()">
+          <span>📋 Custom Data Ego Ko Bhejo</span>
+          <span id="custom-report-arrow">▼</span>
+        </div>
+        <div id="custom-report-body" class="hidden">
+          <div class="custom-report-desc">
+            Koi bhi data yahan paste karo — exam results, 17-din ki performance, notes, jo bhi. Coach analyze karega.
+          </div>
+          <textarea id="custom-report-input" class="form-textarea custom-report-textarea"
+            placeholder="Example:&#10;Mere last 17 din ka data:&#10;- RRB PO mock test: 72/100&#10;- Vocab: 6/17 din complete&#10;- Morning workout: 3/17 miss...&#10;&#10;Ya koi bhi custom question likho coach ke liye."></textarea>
+          <div class="custom-report-actions">
+            <button class="btn-primary full-width" onclick="sendCustomReport()">
+              🚀 Ego Ko Bhejo
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /coach-panel-ego -->
+
+    <!-- ══════════════════════════════════════
+         TERA-JOSH PANEL
+    ═══════════════════════════════════════ -->
+    <div id="coach-panel-josh" class="coach-panel hidden">
+
+      <!-- Josh chat messages -->
+      <div class="coach-chat-wrap" id="josh-chat-wrap">
+        <div id="josh-messages" class="coach-messages"></div>
+        <div id="josh-typing" class="coach-typing hidden">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+
+      <!-- Manual chat section -->
+      <div class="josh-chat-section">
+        <div class="josh-days-selector">
+          <label class="form-label" style="font-size:0.8rem;color:var(--text-secondary)">Josh kitne days ka data dekhe?</label>
+          <select id="josh-days-select" class="form-select" style="width:auto;min-width:140px">
+            <option value="3">Last 3 days</option>
+            <option value="7" selected>Last 7 days</option>
+            <option value="10">Last 10 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30">Last 30 days</option>
+          </select>
+        </div>
+        <textarea id="josh-chat-input" class="form-textarea"
+          placeholder="Josh se seedha baat karo...&#10;e.g. 'hey mujhe motivate karo, mera score kharab raha hai'&#10;ya 'mera last 7 din ka summary batao, kahan weak hoon?'"
+          rows="3"></textarea>
+        <div class="josh-chat-actions">
+          <button class="btn-primary" id="btn-josh-send" style="flex:1"
+            onclick="joshManualChat(document.getElementById('josh-chat-input').value, parseInt(document.getElementById('josh-days-select').value))">
+            💪 Josh Ko Bhejo
+          </button>
+          <button class="btn-secondary" onclick="clearJoshConversations()">🗑️</button>
+        </div>
+      </div>
+
+    </div><!-- /coach-panel-josh -->
+
+  </div><!-- /screen-coach -->
+
+  <!-- ═══════════════════════════════════════════════
+       SCREEN: SETTINGS
+       Built by: Account 1
+  ═══════════════════════════════════════════════ -->
+  <div id="screen-settings" class="screen">
+    <div class="screen-header">
+      <h1 class="screen-title">Settings</h1>
+    </div>
+    <div class="settings-scroll">
+
+      <div class="settings-section">
+        <div class="settings-section-title">Appearance</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Theme</div>
+            <div class="setting-desc">Dark / Light / System</div>
+          </div>
+          <div class="theme-toggle-group">
+            <button class="theme-btn" data-theme="dark" onclick="setTheme('dark')">Dark</button>
+            <button class="theme-btn" data-theme="light" onclick="setTheme('light')">Light</button>
+            <button class="theme-btn" data-theme="system" onclick="setTheme('system')">Auto</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Goals</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Daily Target</div>
+            <div class="setting-desc">Streak ke liye minimum score</div>
+          </div>
+          <div class="setting-control">
+            <input type="number" id="target-percent-input" class="setting-input-num" min="50" max="100" value="80" onchange="updateTargetPercent(this.value)" />
+            <span class="setting-unit">%</span>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Week Start</div>
+            <div class="setting-desc">Pehla din hafte ka</div>
+          </div>
+          <select class="setting-select" id="week-start-select" onchange="updateWeekStart(this.value)">
+            <option value="1">Monday</option>
+            <option value="0">Sunday</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Notifications</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Notification Window</div>
+            <div class="setting-desc">Reminders sirf is time ke beech</div>
+          </div>
+        </div>
+        <div class="setting-row notif-window-row">
+          <label class="setting-label-sm">From</label>
+          <input type="time" id="notif-from" class="setting-input-time" value="06:00" onchange="updateNotifWindow()" />
+          <label class="setting-label-sm">To</label>
+          <input type="time" id="notif-to" class="setting-input-time" value="23:00" onchange="updateNotifWindow()" />
+        </div>
+        <div class="setting-row">
+          <button class="btn-secondary full-width" onclick="requestNotificationPermission()">
+            🔔 Notification Permission
+          </button>
+        </div>
+        <div class="setting-row">
+          <button class="btn-secondary full-width" onclick="showNotifPreview()">
+            📋 Aaj Ke Reminders Dekho
+          </button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Data</div>
+        <div class="setting-row">
+          <button class="btn-secondary full-width" onclick="exportData()">📤 Export Data (JSON)</button>
+        </div>
+        <div class="setting-row">
+          <label class="btn-secondary full-width" style="cursor:pointer;">
+            📥 Import Data (JSON)
+            <input type="file" id="import-file-input" accept=".json" style="display:none" onchange="importData(event)" />
+          </label>
+        </div>
+        <div class="setting-row">
+          <button class="btn-danger full-width" onclick="confirmReset()">🗑️ Reset All Data</button>
+        </div>
+      </div>
+
+      <!-- ── ACCOUNT 4 + 5: Coach Configuration ── -->
+      <div class="settings-section" id="coach-config-section">
+        <div class="settings-section-title">🧠 Tera-Ego Settings</div>
+
+        <!-- API Key 1 -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Gemini API Key 1 <span style="font-size:10px;color:var(--text-secondary)">(Primary)</span></div>
+            <div class="setting-desc">aistudio.google.com se free key lo</div>
+          </div>
+        </div>
+        <div class="setting-row">
+          <input type="password" id="coach-api-key-input" class="form-input" placeholder="AIza..." autocomplete="off" oninput="updateCoachApiKey(this.value)" />
+        </div>
+
+        <!-- API Key 2 -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Gemini API Key 2 <span style="font-size:10px;color:var(--text-secondary)">(Auto-switch backup)</span></div>
+            <div class="setting-desc">2nd account ki key — Key 1 limit hit kare toh auto-switch</div>
+          </div>
+        </div>
+        <div class="setting-row">
+          <input type="password" id="coach-api-key-input-2" class="form-input" placeholder="AIza... (optional)" autocomplete="off" oninput="updateCoachApiKey2(this.value)" />
+        </div>
+
+        <!-- API Key 3 -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Gemini API Key 3 <span style="font-size:10px;color:var(--text-secondary)">(Auto-switch backup)</span></div>
+            <div class="setting-desc">3rd account ki key — Key 2 limit hit kare toh auto-switch</div>
+          </div>
+        </div>
+        <div class="setting-row">
+          <input type="password" id="coach-api-key-input-3" class="form-input" placeholder="AIza... (optional)" autocomplete="off" oninput="updateCoachApiKey3(this.value)" />
+        </div>
+
+        <!-- Live API Key Usage Stats -->
+        <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:4px;background:var(--card-bg);border-radius:10px;padding:10px 12px;margin-top:2px;">
+          <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">📊 Today's API Usage (Free tier: 20 RPD / 5 RPM per key)</div>
+          <div id="api-key-stats-display">
+            <span style="color:var(--text-secondary);font-size:12px;">No keys configured</span>
+          </div>
+        </div>
+
+        <!-- Gemini Model Selector -->
+        <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:6px">
+          <div class="setting-label">AI Model</div>
+          <select class="setting-select" id="gemini-model-select" onchange="updateGeminiModel(this.value)" style="width:100%">
+            <option value="gemini-2.5-flash">⚡ Gemini 2.5 Flash (Recommended)</option>
+            <option value="gemini-2.0-flash">🚀 Gemini 2.0 Flash</option>
+            <option value="gemini-2.0-flash-exp">🧪 Gemini 2.0 Flash Exp</option>
+          </select>
+        </div>
+
+        <!-- Google Search Grounding Toggle -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">🔍 Web Search (Grounding)</div>
+            <div class="setting-desc">Real-time context se AI responses better honge</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="gemini-search-toggle" onchange="updateGeminiSearch(this.checked)" checked />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row" style="gap:8px;align-items:center">
+          <button class="btn-secondary" onclick="testCoachConnection()" style="flex:1">🔌 Test Connection</button>
+          <span class="connection-status" id="connection-status"></span>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Ego Mode</div>
+          </div>
+          <select class="setting-select" id="coach-personality-select" onchange="updateCoachPersonality(this.value)">
+            <option value="gentle">🕊️ Gentle</option>
+            <option value="balanced">⚖️ Balanced</option>
+            <option value="beast">🔥 Beast</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Harshness Level</div>
+            <div class="setting-desc" id="strictness-label">80%</div>
+          </div>
+          <input type="range" id="coach-strictness" class="strictness-slider" min="1" max="100" value="80" oninput="updateStrictness(this.value)" />
+        </div>
+        <div style="padding:0 4px 8px;font-size:11px;color:var(--text-secondary);line-height:1.5">
+          ⚡ Brutality automatically bhi depend karta hai score pe — jitna kharab score, utna zyada brutal message milega. Yeh slider upar se extra adjust karta hai.
+        </div>
+
+        <!-- EGO BLOCK 1: Life Goals -->
+        <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <div class="setting-label">🎯 Meri Life Goals</div>
+          <div class="setting-desc" style="color:var(--text-secondary);font-size:12px;margin-bottom:4px">
+            Jo tu apni zindagi mein achieve karna chahta hai — tera ego yeh jaanta hai aur performance se connect karega.
+          </div>
+          <textarea id="ego-life-goals" class="form-textarea" rows="4"
+            placeholder="Example:&#10;- RRB PO first single attempt mein crack karna hai&#10;- Physically fit rehna — weight 70kg&#10;- ek successful independent life banana&#10;- ..."
+            oninput="updateEgoLifeGoals(this.value)"></textarea>
+        </div>
+
+        <!-- EGO BLOCK 2: What Others Think -->
+        <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <div class="setting-label">💬 Log Kya Sochte Hain Mere Baare Mein</div>
+          <div class="setting-desc" style="color:var(--text-secondary);font-size:12px;margin-bottom:4px">
+            Woh negative words / taunts jo logo ne tujhse kehe hain — tera ego inhe fuel ki tarah use karega.
+          </div>
+          <textarea id="ego-negative-words" class="form-textarea" rows="4"
+            placeholder="Example:&#10;- Usne kaha tha 'tujhse nahi hoga'&#10;- Relatives kehte hain kuch nahi karega yeh&#10;- Teacher ne bola tha average hai&#10;- ..."
+            oninput="updateEgoNegativeWords(this.value)"></textarea>
+        </div>
+
+        <!-- Feature 2: Show/Hide System Prompt Toggle -->
+        <div class="setting-row">
+          <button class="btn-secondary full-width" id="btn-toggle-prompt" onclick="showCoachPromptEditor()">
+            👁 Show Full Ego Prompt (Advanced)
+          </button>
+        </div>
+        <div id="coach-prompt-editor-wrap" class="hidden" style="padding:0 0 8px 0">
+          <div class="setting-label" style="margin-bottom:6px">Ego Prompt — Har word edit kar sakte ho:</div>
+          <textarea id="coach-prompt-textarea" class="form-textarea coach-prompt-area" rows="10"
+                    placeholder="Ego ka full system prompt..." oninput="updateCoachPrompt(this.value)"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn-secondary" onclick="resetCoachPrompt()" style="flex:1">↺ Default Restore</button>
+            <button class="btn-primary" onclick="saveCoachPrompt()" style="flex:1">💾 Save Prompt</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── EGO AI MODE: Auto Reports Settings ── -->
+      <div class="settings-section" id="auto-coach-section">
+        <div class="settings-section-title">🧠 Tera-Ego — Auto Checks</div>
+        <div class="settings-sub-title">Auto Ego Checks (Max 10)</div>
+        <div class="setting-desc" style="padding:0 0 12px 0;color:var(--text-secondary)">
+          Scheduled times pe automatic Ego AI report + background notification milega
+        </div>
+
+        <!-- Auto Daily Checks Toggle -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Daily Auto-Check Reports</div>
+            <div class="setting-desc">Gemini API key required</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="auto-coach-toggle" onchange="toggleAutoCoachEnabled(this.checked)" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <!-- Max per day (editable) -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Max Auto-Checks Per Day</div>
+            <div class="setting-desc">Kitne auto reports chahiye per day (1–10)</div>
+          </div>
+          <input type="number" id="auto-coach-max-per-day" class="form-input" 
+                 style="width:64px;text-align:center" min="1" max="10" value="3"
+                 onchange="updateAutoCoachMaxPerDay(this.value)" />
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Auto Report Personality</div>
+          </div>
+          <select class="setting-select" id="auto-coach-personality" onchange="updateAutoCoachPersonality(this.value)">
+            <option value="gentle">🕊️ Gentle</option>
+            <option value="balanced">⚖️ Balanced</option>
+            <option value="beast">🔥 Beast Mode</option>
+          </select>
+        </div>
+
+        <div class="setting-label" style="margin:8px 0 4px 0">Check Times:</div>
+        <div id="auto-coach-times-list"></div>
+        <button class="btn-secondary full-width" id="btn-add-auto-coach-time" onclick="addAutoCoachTime()" style="margin-top:8px">
+          + Add Check Time
+        </button>
+        <div class="setting-desc" style="margin-top:8px">
+          💡 Suggested: 12:00 (midday), 16:00 (evening push), 23:00 (end-of-day review)
+        </div>
+      </div>
+
+      <!-- ── EGO AI: WEEKLY OVERALL REPORT ── -->
+      <div class="settings-section">
+        <div class="settings-section-title">📊 Weekly Overall Report</div>
+        <div class="setting-desc" style="padding:0 0 12px 0;color:var(--text-secondary)">
+          Har 7 din mein ek comprehensive Ego report — full week ka honest analysis
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Enable Weekly Report</div>
+            <div class="setting-desc">Every 7 days on schedule</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="weekly-report-toggle" onchange="toggleWeeklyReport(this.checked)" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Weekly Report Time</div>
+            <div class="setting-desc">Kis time pe report aaye</div>
+          </div>
+          <input type="time" id="weekly-report-time" class="setting-input-time"
+                 value="20:00" onchange="updateWeeklyReportTime(this.value)" />
+        </div>
+      </div>
+
+      <!-- ── EGO AI: DAILY PROGRESS REPORT ── -->
+      <div class="settings-section">
+        <div class="settings-section-title">📈 Daily Progress Report</div>
+        <div class="setting-desc" style="padding:0 0 12px 0;color:var(--text-secondary)">
+          Roz ek deep report — Day 1 se aaj tak poori journey ka overall progress
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Enable Daily Progress</div>
+            <div class="setting-desc">Day 1 to now — overall journey</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="daily-progress-toggle" onchange="toggleDailyProgress(this.checked)" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Daily Progress Time</div>
+            <div class="setting-desc">Kis time pe report aaye</div>
+          </div>
+          <input type="time" id="daily-progress-time" class="setting-input-time"
+                 value="21:30" onchange="updateDailyProgressTime(this.value)" />
+        </div>
+      </div>
+
+      <!-- ── ACCOUNT 4 (JOSH): My-Josh Settings ── -->
+      <div class="settings-section" id="josh-config-section">
+        <div class="settings-section-title">💪 Tera-Josh Settings</div>
+        <div class="setting-desc" style="padding:0 0 12px;color:var(--text-secondary)">
+          Josh tera hype man aur reminder hai — upcoming tasks yaad dilata hai aur motivate karta hai
+        </div>
+
+        <!-- Josh Auto Reminders Toggle -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Josh Auto Reminders</div>
+            <div class="setting-desc">Upcoming tasks yaad dilata hai aur motivate karta hai</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="josh-auto-toggle" onchange="toggleJoshAutoEnabled(this.checked)" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <!-- Josh Personality -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Josh Personality</div>
+          </div>
+          <select class="setting-select" id="josh-personality-select" onchange="updateJoshPersonality(this.value)">
+            <option value="energetic">⚡ Energetic</option>
+            <option value="calm">🌊 Calm</option>
+            <option value="beast">🔥 Beast</option>
+          </select>
+        </div>
+
+        <!-- Max Reminders Per Day -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Max Auto Reminders/Day</div>
+            <div class="setting-desc">1–10 times per day</div>
+          </div>
+          <input type="number" class="form-input" id="josh-auto-max-per-day"
+                 style="width:64px;text-align:center" min="1" max="10" value="3"
+                 onchange="updateJoshMaxPerDay(this.value)" />
+        </div>
+
+        <div class="settings-sub-title">Josh Auto Reminder Times</div>
+        <div id="josh-auto-times-list"></div>
+        <button class="btn-secondary full-width" id="btn-add-josh-time" onclick="addJoshAutoTime()" style="margin-top:8px">
+          + Add Reminder Time
+        </button>
+
+        <!-- Josh Prompt (editable) -->
+        <div class="settings-sub-title" style="margin-top:16px">Josh Auto Prompt (Editable)</div>
+        <div class="setting-desc" style="margin-bottom:8px;color:var(--text-secondary)">
+          Tera-Josh ki auto reminder ke liye custom prompt. Empty chhod do = default use hoga.
+        </div>
+        <textarea class="form-textarea coach-prompt-area" id="josh-prompt-textarea" rows="6"
+          placeholder="Empty chhod do default Tera-Josh prompt use karne ke liye..."
+          oninput="updateJoshPrompt(this.value)"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn-secondary" onclick="resetJoshPrompt()" style="flex:1">↺ Default Restore</button>
+          <button class="btn-primary" onclick="saveJoshPrompt()" style="flex:1">💾 Save Prompt</button>
+        </div>
+      </div>
+
+      <!-- ── ACCOUNT 4: Profile & Badges ── -->
+      <div class="settings-section">
+        <div class="settings-section-title">🏆 Profile & Badges</div>
+        <div id="profile-level-display"></div>
+        <div id="badges-display" class="badges-grid"></div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">About</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">App Version</div>
+          </div>
+          <div class="setting-value muted">1.4.0 (Account 5 — Final)</div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-label">Install as App</div>
+            <div class="setting-desc">Android: Menu → Add to Home Screen | iOS: Share → Add to Home Screen</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       BOTTOM NAVIGATION
+  ═══════════════════════════════════════════════ -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-screen="today" onclick="showScreen('today')">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9,22 9,12 15,12 15,22"/>
+        </svg>
+      </span>
+      <span class="nav-label">Today</span>
+    </button>
+    <button class="nav-btn" data-screen="categories" onclick="showScreen('categories')">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+        </svg>
+      </span>
+      <span class="nav-label">Categories</span>
+    </button>
+    <button class="nav-btn" data-screen="progress" onclick="showScreen('progress')">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+          <polyline points="3,20 21,20"/>
+        </svg>
+      </span>
+      <span class="nav-label">Progress</span>
+    </button>
+    <button class="nav-btn" data-screen="coach" onclick="showScreen('coach')">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+        </svg>
+      </span>
+      <span class="nav-label">Ego</span>
+    </button>
+    <button class="nav-btn" data-screen="settings" onclick="showScreen('settings')">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </span>
+      <span class="nav-label">Settings</span>
+    </button>
+  </nav>
+
+  <!-- ═══════════════════════════════════════════════
+       MODALS — shared overlay
+  ═══════════════════════════════════════════════ -->
+  <div id="modal-overlay" class="modal-overlay hidden" onclick="closeModalOnOverlay(event)">
+
+    <!-- Add / Edit Category Modal -->
+    <div id="modal-category" class="modal hidden">
+      <div class="modal-header">
+        <h2 id="modal-cat-title">Category Add Karo</h2>
+        <button class="modal-close" onclick="closeModal('modal-category')">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label">Name *</label>
+        <input type="text" id="cat-name-input" class="form-input" placeholder="e.g. RRB PO" maxlength="30" />
+        <label class="form-label">Color</label>
+        <div class="color-picker" id="color-picker">
+          <!-- Colors rendered by JS -->
+        </div>
+        <input type="color" id="cat-color-custom" class="color-custom-input" value="#FF6B6B" onchange="selectCustomColor(this.value)" />
+        <label class="form-label" style="margin-top:4px;">Custom color bhi choose kar sakte ho ☝️</label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('modal-category')">Cancel</button>
+        <button class="btn-primary" onclick="saveCategory()">Save</button>
+      </div>
+    </div>
+
+    <!-- Add / Edit Task Modal -->
+    <div id="modal-task" class="modal hidden">
+      <div class="modal-header">
+        <h2 id="modal-task-title">Task Add Karo</h2>
+        <button class="modal-close" onclick="closeModal('modal-task')">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label">Task Name *</label>
+        <input type="text" id="task-name-input" class="form-input" placeholder="e.g. Morning Workout" maxlength="60" />
+
+        <label class="form-label">Category *</label>
+        <select id="task-cat-select" class="form-select"></select>
+
+        <label class="form-label">Priority</label>
+        <div class="priority-picker" id="priority-picker">
+          <button class="priority-btn" data-priority="high" onclick="selectPriority('high')">🔴 High (3pts)</button>
+          <button class="priority-btn active" data-priority="medium" onclick="selectPriority('medium')">🟡 Medium (2pts)</button>
+          <button class="priority-btn" data-priority="low" onclick="selectPriority('low')">🟢 Low (1pt)</button>
+        </div>
+
+        <!-- Account 2: Working Window Section (replaces simple Scheduled Time) -->
+        <div class="form-group">
+          <label class="form-label">🪟 Working Window</label>
+          <div class="working-window-desc">
+            Kis time se start karoge aur last acceptable time kab hai?
+            Agar last acceptable time tak done nahi hua → Untracked (worst case, 0 score)
+          </div>
+          <div class="working-window-row">
+            <div class="ww-field">
+              <label class="ww-label">Start (Kab Karoge)</label>
+              <input type="time" id="task-time-input" class="form-input" value="07:00" />
+            </div>
+            <div class="ww-sep">→</div>
+            <div class="ww-field">
+              <label class="ww-label">Last Acceptable Time</label>
+              <input type="time" id="task-window-end-input" class="form-input" />
+            </div>
+          </div>
+          <div class="ww-hint">
+            💡 "Last Acceptable Time" empty chhod do agar koi hard deadline nahi hai
+          </div>
+        </div>
+
+        <label class="form-label">Time Estimate (minutes)</label>
+        <input type="number" id="task-duration-input" class="form-input" placeholder="30" min="1" max="480" />
+
+        <label class="form-label">Why This Matters</label>
+        <textarea id="task-why-input" class="form-textarea" placeholder="Yeh task important kyun hai? Khud ko motivate karo..."></textarea>
+
+        <!-- ── ACCOUNT 2: Multi-Reminder Notification Panel ── -->
+        <div class="notif-section-header">
+          <label class="form-label" style="margin:0">🔔 Reminders</label>
+          <span class="notif-count-badge" id="notif-count-badge">0</span>
+        </div>
+        <div id="ios-notif-warning" class="ios-warning hidden">
+          ⚠️ iOS Safari mein push notifications web apps ke liye limited hain. Reminders set ho jayenge par background delivery reliable nahi hai.
+        </div>
+        <div id="notif-permission-bar" class="notif-permission-bar hidden">
+          🔕 Notifications blocked hain.
+          <button class="notif-allow-btn" onclick="requestNotificationPermission()">Allow karo</button>
+        </div>
+        <!-- Reminder cards rendered here by JS -->
+        <div id="task-notif-list"></div>
+        <button class="btn-add-reminder" id="btn-add-reminder" onclick="addReminderRow()">
+          + Reminder Add Karo
+        </button>
+        <div class="notif-max-note hidden" id="notif-max-note">⚠️ Maximum 5 reminders per task</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('modal-task')">Cancel</button>
+        <button class="btn-primary" onclick="saveTask()">Save</button>
+      </div>
+    </div>
+
+    <!-- Delete Confirm Modal -->
+    <div id="modal-confirm" class="modal hidden">
+      <div class="modal-header">
+        <h2 id="modal-confirm-title">Confirm Karo</h2>
+        <button class="modal-close" onclick="closeModal('modal-confirm')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="modal-confirm-msg">Kya aap sure hain?</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('modal-confirm')">Cancel</button>
+        <button class="btn-danger" id="modal-confirm-ok" onclick="">Haan, Delete Karo</button>
+      </div>
+    </div>
+
+    <!-- Focus Timer Modal -->
+    <div id="modal-focus-timer" class="modal hidden">
+      <div class="modal-header">
+        <h2>🎯 Focus Mode</h2>
+        <button class="modal-close" onclick="closeFocusTimer()">✕</button>
+      </div>
+      <div class="modal-body focus-timer-body">
+        <div class="focus-task-label" id="focus-task-name">Task</div>
+
+        <!-- SVG countdown ring -->
+        <div class="focus-ring-wrap">
+          <svg class="focus-ring-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+            <circle class="focus-ring-bg"   cx="60" cy="60" r="52"/>
+            <circle class="focus-ring-fill" cx="60" cy="60" r="52"
+                    id="focus-progress-circle"
+                    style="stroke-dasharray:326.73;stroke-dashoffset:0"/>
+          </svg>
+          <div class="focus-time-display" id="focus-timer-display">25:00</div>
+          <div class="focus-ring-label" id="focus-ring-label">Ready</div>
+        </div>
+
+        <!-- Controls -->
+        <div class="focus-controls">
+          <button class="focus-btn-reset" onclick="resetFocusTimer()" title="Reset">↺</button>
+          <button class="focus-btn-play"  id="btn-focus-play" onclick="startFocusTimer()">▶</button>
+          <button class="focus-btn-done"  onclick="markFocusTaskDone()">✓ Done</button>
+        </div>
+
+        <div class="focus-session-info" id="focus-session-info">0 sessions today</div>
+      </div>
+    </div>
+
+    <!-- Reset Confirm Modal -->
+    <div id="modal-reset" class="modal hidden">
+      <div class="modal-header">
+        <h2>Data Reset Karo</h2>
+        <button class="modal-close" onclick="closeModal('modal-reset')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>⚠️ Yeh aapka saara data delete kar dega. Undo nahi hoga!</p>
+        <p>Confirm karne ke liye <strong>DELETE</strong> type karo:</p>
+        <input type="text" id="reset-confirm-input" class="form-input" placeholder="DELETE" />
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('modal-reset')">Cancel</button>
+        <button class="btn-danger" onclick="executeReset()">Reset</button>
+      </div>
+    </div>
+
+    <!-- Why Missed Modal -->
+    <div id="modal-missed" class="modal hidden">
+      <div class="modal-header">
+        <h2>Miss kyun hua? 🤔</h2>
+        <button class="modal-close" onclick="closeModal('modal-missed')">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="modal-missed-task-name" class="muted"></p>
+        <div class="missed-reasons" id="missed-reasons">
+          <button class="reason-btn" onclick="selectMissedReason('too_tired')">😴 Too Tired</button>
+          <button class="reason-btn" onclick="selectMissedReason('forgot')">🤦 Forgot</button>
+          <button class="reason-btn" onclick="selectMissedReason('no_time')">⏰ No Time</button>
+          <button class="reason-btn" onclick="selectMissedReason('not_motivated')">😔 Not Motivated</button>
+          <button class="reason-btn" onclick="selectMissedReason('other')">💬 Other</button>
+        </div>
+        <textarea id="missed-reason-text" class="form-textarea" placeholder="Kuch aur batao (optional)..."></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('modal-missed')">Skip</button>
+        <button class="btn-primary" onclick="saveMissedReason()">Save</button>
+      </div>
+    </div>
+
+    <!-- ── ACCOUNT 2: Notification Preview Modal ── -->
+    <div id="modal-notif-preview" class="modal hidden">
+      <div class="modal-header">
+        <h2>🔔 Aaj Ke Reminders</h2>
+        <button class="modal-close" onclick="closeModal('modal-notif-preview')">✕</button>
+      </div>
+      <div class="modal-body" id="notif-preview-body">
+        <!-- Rendered by JS -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn-primary full-width" onclick="closeModal('modal-notif-preview')">OK</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- ── ACCOUNT 4: Celebration overlay ── -->
+  <div id="celebration-overlay" class="celebration-overlay hidden">
+    <canvas id="confetti-canvas"></canvas>
+    <div class="celebration-content">
+      <div class="celebration-emoji" id="celebration-emoji">🎉</div>
+      <div class="celebration-title" id="celebration-title">Perfect Day!</div>
+      <div class="celebration-sub" id="celebration-sub"></div>
+      <button class="btn-primary" onclick="closeCelebration()">Let's Go! 🚀</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script src="flutter_bridge.js"></script>
+  <!-- Account 5: Capacitor SDK is bundled automatically by `npx cap sync`.
+       When running as APK the Capacitor bridge is available at window.Capacitor.
+       In browser this tag is absent — the detection above handles it gracefully. -->
+</body>
+</html>

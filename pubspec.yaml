@@ -1,0 +1,42 @@
+name: aainik_app
+description: Aainik — Task Mastery. A personal productivity app with AI coaching.
+publish_to: 'none'
+version: 2.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # WebView to host the existing web app
+  flutter_inappwebview: ^6.1.5
+
+  # Background task execution (runs Gemini API even when app is killed)
+  workmanager: ^0.5.2
+
+  # Local notifications (task reminders, AI result notifications)
+  flutter_local_notifications: ^17.2.4
+
+  # Persistent storage — stores appData JSON for background tasks to read
+  shared_preferences: ^2.3.2
+
+  # HTTP — for Gemini API calls from background tasks
+  http: ^1.2.2
+
+  # Permissions (notifications, exact alarms)
+  permission_handler: ^11.3.1
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/www/index.html
+    - assets/www/app.js
+    - assets/www/styles.css
+    - assets/www/sw.js
+    - assets/www/manifest.json
+    - assets/www/flutter_bridge.js
+    - assets/www/icons/icon-192.png
+    - assets/www/icons/icon-512.png
