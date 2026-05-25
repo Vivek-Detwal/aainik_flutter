@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:workmanager/workmanager.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+import 'package:aainik_app/main.dart' show alarmCallback;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'background_service.dart';
 import 'notification_service.dart';
@@ -298,53 +299,54 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       }
     }
   }
-
-  Future<void> _scheduleAutoTask({
+Future<void> _scheduleAutoTask({
     required String taskPrefix,
     required String time,
     required Map<String, dynamic> inputData,
   }) async {
-    final now = DateTime.now();
+    final now   = DateTime.now();
     final parts = time.split(':');
     if (parts.length != 2) return;
 
-    final hour = int.tryParse(parts[0]) ?? 0;
+    final hour   = int.tryParse(parts[0]) ?? 0;
     final minute = int.tryParse(parts[1]) ?? 0;
 
+    // Target = today at scheduled time, or tomorrow if that's already passed
     var target = DateTime(now.year, now.month, now.day, hour, minute, 0);
     if (!target.isAfter(now.add(const Duration(minutes: 1)))) {
       target = target.add(const Duration(days: 1));
     }
 
-    final delay = target.difference(now);
-    final taskName = '$taskPrefix${time.replaceAll(':', '_')}';
+    // Determine alarm ID from task type + time
+    final isEgo  = taskPrefix.contains('ego');
+    final alarmId= isEgo ? AlarmIds.forEgo(time) : AlarmIds.forJosh(time);
 
     try {
-      await Workmanager().registerOneOffTask(
-        taskName,
-        taskName,
-        initialDelay: delay,
-        constraints: Constraints(
-          networkType: NetworkType.connected,
-          requiresBatteryNotLow: false,
-          requiresCharging: false,
-          requiresDeviceIdle: false,
-        ),
-        existingWorkPolicy: ExistingWorkPolicy.replace,
-        inputData: {
-          'triggerTime': time,
-          'taskType': taskPrefix.contains('ego') ? 'ego' : 'josh',
-        },
+      await AndroidAlarmManager.oneShotAt(
+        target,
+        alarmId,
+        alarmCallback,          // top-level callback in main.dart
+        exact: true,            // no deferral
+        wakeup: true,           // wake device from Doze
+        rescheduleOnReboot: true, // re-register after phone restart
+        alarmClock: true,       // highest Android priority, shown in status bar
       );
+      debugPrint('[FlutterBridge] Alarm $alarmId set for ${isEgo ? 'Ego' : 'Josh'} at $target');
     } catch (e) {
       debugPrint('[FlutterBridge] scheduleAutoTask error: $e');
     }
   }
-
   Future<void> _cancelAllAutoTasks() async {
+    // Cancel all possible ego and josh alarm IDs
+    // Alarm ID range: ego 10000–11439, josh 20000–21439
+    // We iterate all possible HH:MM combinations (1440 possibilities per type)
+    // but only actually cancel ones that exist — Android ignores unknown IDs.
     try {
-      await Workmanager().cancelByTag(TaskNames.egoAutoPrefix);
-      await Workmanager().cancelByTag(TaskNames.joshAutoPrefix);
+      for (int minutes = 0; minutes < 1440; minutes++) {
+        await AndroidAlarmManager.cancel(AlarmIds.egoBase  + minutes);
+        await AndroidAlarmManager.cancel(AlarmIds.joshBase + minutes);
+      }
+      debugPrint('[FlutterBridge] All alarms cancelled');
     } catch (e) {
       debugPrint('[FlutterBridge] cancelAllAutoTasks error: $e');
     }
