@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'background_service.dart';
+import 'notification_service.dart';
 
 /// ─────────────────────────────────────────────────────────────
 /// WebViewScreen
@@ -202,6 +204,58 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       callback: (args) async {
         await BackgroundService.clearPendingConversations();
         debugPrint('[FlutterBridge] Pending conversations cleared');
+      },
+    );
+
+    // ── FIX: JS Handler: showNotification ───────────────────
+    // Called by the window.Notification shim in flutter_bridge.js
+    // whenever JS does `new Notification(title, {body: ...})`.
+    // Routes the notification to Flutter's NotificationService
+    // so it shows as a real Android system notification.
+    controller.addJavaScriptHandler(
+      handlerName: 'showNotification',
+      callback: (args) async {
+        try {
+          final dataJson = args.isNotEmpty ? args[0] as String : null;
+          if (dataJson == null || dataJson.isEmpty) return;
+
+          final data = jsonDecode(dataJson) as Map<String, dynamic>;
+          final title = (data['title'] as String?) ?? 'Aainik';
+          final body = (data['body'] as String?) ?? '';
+
+          // Use a time-based ID to avoid collisions between notifications
+          final id = DateTime.now().millisecondsSinceEpoch % 99999;
+
+          await NotificationService.showTaskNotification(
+            id: id,
+            title: title,
+            body: body,
+          );
+          debugPrint('[FlutterBridge] showNotification: $title');
+        } catch (e) {
+          debugPrint('[FlutterBridge] showNotification error: $e');
+        }
+      },
+    );
+
+    // ── FIX: JS Handler: requestNotificationPermission ──────
+    // Called by flutter_bridge.js shim when JS code calls
+    // Notification.requestPermission(). Ensures Flutter has
+    // actually been granted notification permission on Android 13+.
+    controller.addJavaScriptHandler(
+      handlerName: 'requestNotificationPermission',
+      callback: (args) async {
+        try {
+          final androidPlugin = FlutterLocalNotificationsPlugin()
+              .resolvePlatformSpecificImplementation<
+                  AndroidFlutterLocalNotificationsPlugin>();
+          if (androidPlugin != null) {
+            final granted = await androidPlugin.requestNotificationsPermission();
+            debugPrint('[FlutterBridge] Notification permission: $granted');
+          }
+        } catch (e) {
+          debugPrint('[FlutterBridge] requestNotificationPermission error: $e');
+        }
       },
     );
   }
