@@ -18,9 +18,8 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onNotificationTap,
     );
 
-    // Create Android notification channels
     final androidPlugin = _plugin
-        .resolvePlatformSpecificImplementation<
+        .resolvePlatformSpecificImplementation
             AndroidFlutterLocalNotificationsPlugin>();
 
     if (androidPlugin != null) {
@@ -60,23 +59,17 @@ class NotificationService {
         ),
       );
 
-      // Request exact alarm permission
       await androidPlugin.requestExactAlarmsPermission();
     }
 
-    // Request notification permission
     await _plugin
-        .resolvePlatformSpecificImplementation<
+        .resolvePlatformSpecificImplementation
             AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
   }
 
-  static void _onNotificationTap(NotificationResponse response) {
-    // Notification tapped — the app will open to coach screen via
-    // the payload. The WebView screen handles this on resume.
-  }
+  static void _onNotificationTap(NotificationResponse response) {}
 
-  /// Show Ego AI result notification (BigText — expandable full response)
   static Future<void> showEgoNotification({
     required int id,
     required String title,
@@ -104,7 +97,6 @@ class NotificationService {
       color: const Color(0xFFA29BFE),
       playSound: true,
       enableVibration: true,
-      payload: 'coach:ego',
     );
 
     await _plugin.show(
@@ -112,10 +104,10 @@ class NotificationService {
       title,
       body.length > 150 ? '${body.substring(0, 150)}...' : body,
       NotificationDetails(android: androidDetails),
+      payload: 'coach:ego',
     );
   }
 
-  /// Show Josh motivational notification (BigText — expandable)
   static Future<void> showJoshNotification({
     required int id,
     required String title,
@@ -143,7 +135,6 @@ class NotificationService {
       color: const Color(0xFF55EFC4),
       playSound: true,
       enableVibration: true,
-      payload: 'coach:josh',
     );
 
     await _plugin.show(
@@ -151,10 +142,10 @@ class NotificationService {
       title,
       body.length > 150 ? '${body.substring(0, 150)}...' : body,
       NotificationDetails(android: androidDetails),
+      payload: 'coach:josh',
     );
   }
 
-  /// Show task reminder notification
   static Future<void> showTaskNotification({
     required int id,
     required String title,
