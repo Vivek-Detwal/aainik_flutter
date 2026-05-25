@@ -1,249 +1,578 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'notification_service.dart';
 
-/// WorkManager background task names
-class TaskNames {
-  static const String egoAutoPrefix = 'ego_auto_';
-  static const String joshAutoPrefix = 'josh_auto_';
+// Forward reference — alarmCallback is defined in main.dart
+// This import is NOT needed because alarmCallback is a top-level function
+// registered by name via @pragma('vm:entry-point')
+// The AndroidAlarmManager.oneShotAt call references it directly.
+
+// Import the top-level alarmCallback so we can pass it to oneShotAt
+// (Flutter requires the callback to be in scope at the call site)
+import 'package:aainik_app/main.dart' show alarmCallback;
+
+/// Alarm ID ranges — deterministic from the scheduled time.
+/// Ego alarms:  10000 + (hour * 60 + minute)  → range 10000–11439
+/// Josh alarms: 20000 + (hour * 60 + minute)  → range 20000–21439
+class AlarmIds {
+  static const int egoBase  = 10000;
+  static const int joshBase = 20000;
+
+  /// Returns alarm ID for an Ego task at given "HH:MM" time.
+  static int forEgo(String time) {
+    final parts = time.split(':');
+    if (parts.length != 2) return egoBase;
+    return egoBase + (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
+  }
+
+  /// Returns alarm ID for a Josh task at given "HH:MM" time.
+  static int forJosh(String time) {
+    final parts = time.split(':');
+    if (parts.length != 2) return joshBase;
+    return joshBase + (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
+  }
+
+  /// Reconstructs "HH:MM" trigger time string from alarm ID.
+  static String triggerTimeFromId(int id) {
+    final minutes = id >= joshBase ? id - joshBase : id - egoBase;
+    final h = minutes ~/ 60;
+    final m = minutes % 60;
+    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+  }
+
+  /// Returns true if this alarm ID belongs to Josh (not Ego).
+  static bool isJosh(int id) => id >= joshBase;
 }
 
 /// Keys for SharedPreferences
 class PrefKeys {
-  static const String appData = 'aainik_app_data_v1';
+  static const String appData                 = 'aainik_app_data_v1';
   static const String pendingEgoConversations = 'aainik_pending_ego_convs';
-  static const String pendingJoshConversations = 'aainik_pending_josh_convs';
+  static const String pendingJoshConversations= 'aainik_pending_josh_convs';
 }
 
 /// ─────────────────────────────────────────────────────────────
 /// BackgroundService
-/// Called by WorkManager when a background task fires.
-/// Can run even when the app is completely killed.
+/// Called by android_alarm_manager_plus when an alarm fires.
+/// Runs in a separate Dart isolate — app can be completely dead.
 /// ─────────────────────────────────────────────────────────────
 class BackgroundService {
-  static Future<void> executeTask(String taskName, Map<String, dynamic> inputData) async {
-    // Initialize notification service for background context
-    await NotificationService.initialize();
 
-    if (taskName.startsWith(TaskNames.egoAutoPrefix)) {
-      final triggerTime = taskName.substring(TaskNames.egoAutoPrefix.length);
-      await _runEgoAutoCheck(triggerTime, inputData);
-    } else if (taskName.startsWith(TaskNames.joshAutoPrefix)) {
-      final triggerTime = taskName.substring(TaskNames.joshAutoPrefix.length);
-      await _runJoshAutoReminder(triggerTime, inputData);
+  /// Entry point called from alarmCallback(int id) in main.dart.
+  /// Determines task type from alarm ID, then:
+  ///   1. Immediately reschedules for tomorrow (self-perpetuating)
+  ///   2. Tries Gemini API → rich notification
+  ///   3. If Gemini fails → fallback local-data notification
+  static Future<void> handleAlarm(int alarmId) async {
+    final triggerTime = AlarmIds.triggerTimeFromId(alarmId);
+    final isJosh      = AlarmIds.isJosh(alarmId);
+
+    // ── Step 1: Self-reschedule FIRST (before doing any work).
+    // This ensures the alarm is registered for tomorrow even if the
+    // Gemini call crashes or times out.
+    await _rescheduleForTomorrow(alarmId, triggerTime);
+
+    // ── Step 2: Run the actual task with Gemini + fallback
+    if (isJosh) {
+      await _runJoshAutoReminder(triggerTime);
+    } else {
+      await _runEgoAutoCheck(triggerTime);
     }
   }
 
-  // ── Ego Auto Check ────────────────────────────────────────────
-  // Calls Gemini API with today's task progress context
-  // Shows rich notification with full AI reality check
-  static Future<void> _runEgoAutoCheck(String triggerTime, Map<String, dynamic> inputData) async {
+  /// Re-registers the same alarm for the same time tomorrow.
+  /// Uses alarmClock: true — highest priority, cannot be deferred by Android.
+  static Future<void> _rescheduleForTomorrow(int alarmId, String triggerTime) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final parts  = triggerTime.split(':');
+      final hour   = int.tryParse(parts[0]) ?? 0;
+      final minute = int.tryParse(parts[1]) ?? 0;
+
+      final now = DateTime.now();
+      // Always schedule for tomorrow at the same time
+      final nextFire = DateTime(now.year, now.month, now.day + 1, hour, minute, 0);
+
+      await AndroidAlarmManager.oneShotAt(
+        nextFire,
+        alarmId,
+        alarmCallback,           // top-level function in main.dart
+        exact: true,
+        wakeup: true,            // wakes device from Doze
+        rescheduleOnReboot: true,// package re-registers after device restart
+        alarmClock: true,        // highest priority — same as Android's clock app
+      );
+
+      print('[BackgroundService] Rescheduled alarm $alarmId for $nextFire');
+    } catch (e) {
+      print('[BackgroundService] Reschedule error: $e');
+    }
+  }
+
+  // ── Ego Auto Check ─────────────────────────────────────────────
+  static Future<void> _runEgoAutoCheck(String triggerTime) async {
+    SharedPreferences? prefs;
+    String personality = 'beast';
+    List<Map<String, dynamic>> tasksDueByNow = [];
+    int doneCount = 0, totalDue = 0, pendingCount = 0, untrackedCount = 0;
+
+    try {
+      prefs = await SharedPreferences.getInstance();
       final dataJson = prefs.getString(PrefKeys.appData);
       if (dataJson == null) return;
 
-      final appData = jsonDecode(dataJson) as Map<String, dynamic>;
+      final appData  = jsonDecode(dataJson) as Map<String, dynamic>;
       final settings = appData['settings'] as Map<String, dynamic>? ?? {};
 
       if (settings['autoCoachEnabled'] != true) return;
 
       final apiKey = _getAvailableApiKey(settings);
-      if (apiKey == null || apiKey.isEmpty) return;
+      personality  = settings['autoCoachPersonality'] as String? ?? 'beast';
 
-      // Build context
       final today = _getTodayStr();
-      final tasksDueByNow = _getTasksDueByNow(appData, triggerTime, today);
-      final doneCount = tasksDueByNow.where((t) => t['completed'] == true).length;
-      final totalDue = tasksDueByNow.length;
-      final pendingCount = tasksDueByNow.where((t) => t['isPending'] == true).length;
-      final untrackedCount = tasksDueByNow.where((t) => t['isUntracked'] == true).length;
+      tasksDueByNow = _getTasksDueByNow(appData, triggerTime, today);
+      doneCount     = tasksDueByNow.where((t) => t['completed'] == true).length;
+      totalDue      = tasksDueByNow.length;
+      pendingCount  = tasksDueByNow.where((t) => t['isPending']  == true).length;
+      untrackedCount= tasksDueByNow.where((t) => t['isUntracked']== true).length;
 
-      final personality = settings['autoCoachPersonality'] as String? ?? 'beast';
-      final lifeGoals = settings['egoLifeGoals'] as String? ?? '';
-      final negativeWords = settings['egoNegativeWords'] as String? ?? '';
-      final model = settings['geminiModel'] as String? ?? 'gemini-2.5-flash';
-      final searchEnabled = settings['geminiSearchEnabled'] != false;
+      // ── Try Gemini first ──────────────────────────────────────
+      if (apiKey != null && apiKey.isNotEmpty) {
+        final lifeGoals    = settings['egoLifeGoals']    as String? ?? '';
+        final negativeWords= settings['egoNegativeWords']as String? ?? '';
+        final model        = settings['geminiModel']     as String? ?? 'gemini-2.5-flash';
+        final searchEnabled= settings['geminiSearchEnabled'] != false;
 
-      // Build prompts
-      final systemPrompt = _buildEgoSystemPrompt(personality, lifeGoals, negativeWords);
-      final userContent = _buildEgoUserContent(
-        triggerTime, tasksDueByNow, doneCount, totalDue,
-        pendingCount, untrackedCount, appData,
+        final systemPrompt = _buildEgoSystemPrompt(personality, lifeGoals, negativeWords);
+        final userContent  = _buildEgoUserContent(
+          triggerTime, tasksDueByNow, doneCount, totalDue, pendingCount, untrackedCount, appData,
+        );
+
+        String? fullResponse;
+        try {
+          fullResponse = await _callGemini(
+            apiKey, model, systemPrompt, userContent, 800, searchEnabled,
+          ).timeout(const Duration(seconds: 25));
+        } catch (_) {
+          fullResponse = null;
+        }
+
+        if (fullResponse != null && fullResponse.isNotEmpty) {
+          // ── Gemini succeeded — show full AI notification ──────
+          final lines    = fullResponse.trim().split('\n').where((l) => l.trim().isNotEmpty).toList();
+          final headline = lines.isNotEmpty
+              ? lines[0].replaceAll(RegExp(r'[*_#]'), '').substring(0, min(90, lines[0].length))
+              : 'Tera-Ego ka check — dekho!';
+          final notifBody= lines.length > 1
+              ? lines.sublist(1).join('\n').trim()
+              : fullResponse.trim();
+
+          final notifId = 8000000 + (DateTime.now().millisecondsSinceEpoch % 999999);
+          await NotificationService.showEgoNotification(
+            id: notifId, title: '🧠 $headline', body: notifBody, fullText: fullResponse,
+          );
+
+          await _savePendingConversation(prefs, PrefKeys.pendingEgoConversations, {
+            'id':          'conv_auto_bg_${DateTime.now().millisecondsSinceEpoch}',
+            'type':        'auto',
+            'triggerTime': triggerTime,
+            'date':        today,
+            'timestamp':   DateTime.now().millisecondsSinceEpoch,
+            'scoreLabel':  '$doneCount/$totalDue done | Untracked: $untrackedCount | Pending: $pendingCount',
+            'response':    fullResponse,
+            'headline':    headline,
+            'personality': personality,
+            'source':      'background',
+          });
+          return; // Done — Gemini succeeded
+        }
+      }
+
+      // ── Gemini failed / no key — show local-data fallback ────
+      await _showEgoFallbackNotification(
+        triggerTime: triggerTime,
+        tasksDueByNow: tasksDueByNow,
+        doneCount: doneCount,
+        totalDue: totalDue,
+        untrackedCount: untrackedCount,
+        pendingCount: pendingCount,
+        personality: personality,
       );
 
-      // Call Gemini API
-      final fullResponse = await _callGemini(apiKey, model, systemPrompt, userContent, 800, searchEnabled);
-      if (fullResponse == null) return;
-
-      // Parse response
-      final lines = fullResponse.trim().split('\n').where((l) => l.trim().isNotEmpty).toList();
-      final headline = lines.isNotEmpty
-          ? lines[0].replaceAll(RegExp(r'[*_#]'), '').substring(0, min(90, lines[0].length))
-          : 'Tera-Ego ka check — dekho!';
-      final notifBody = lines.length > 1
-          ? lines.sublist(1).join('\n').trim()
-          : fullResponse.trim();
-
-      // Show notification
-      final notifId = 8000000 + (DateTime.now().millisecondsSinceEpoch % 999999);
-      await NotificationService.showEgoNotification(
-        id: notifId,
-        title: '🧠 $headline',
-        body: notifBody,
-        fullText: fullResponse,
-      );
-
-      // Save conversation to pending list so app can show it in history
-      await _savePendingConversation(prefs, PrefKeys.pendingEgoConversations, {
-        'id': 'conv_auto_bg_${DateTime.now().millisecondsSinceEpoch}',
-        'type': 'auto',
-        'triggerTime': triggerTime,
-        'date': today,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
-        'scoreLabel': '$doneCount/$totalDue done | Untracked: $untrackedCount | Pending: $pendingCount',
-        'response': fullResponse,
-        'headline': headline,
-        'personality': personality,
-        'source': 'background',
-      });
+      // Save a lightweight pending entry so app shows the retry prompt
+      if (prefs != null) {
+        final today = _getTodayStr();
+        await _savePendingConversation(prefs, PrefKeys.pendingEgoConversations, {
+          'id':          'conv_auto_bg_fallback_${DateTime.now().millisecondsSinceEpoch}',
+          'type':        'auto_fallback',
+          'triggerTime': triggerTime,
+          'date':        today,
+          'timestamp':   DateTime.now().millisecondsSinceEpoch,
+          'scoreLabel':  '$doneCount/$totalDue done | Fallback sent',
+          'response':    _buildEgoFallbackText(tasksDueByNow, doneCount, totalDue, untrackedCount, pendingCount, personality),
+          'headline':    'App khol — Ego full report wahan mil jayegi!',
+          'personality': personality,
+          'source':      'background_fallback',
+        });
+      }
 
     } catch (e) {
-      // Silently fail — user shouldn't see crash dialogs from background tasks
       print('[BackgroundService] Ego error: $e');
+      // Last resort — show minimal fallback if we have any data
+      try {
+        if (tasksDueByNow.isNotEmpty) {
+          await _showEgoFallbackNotification(
+            triggerTime: triggerTime,
+            tasksDueByNow: tasksDueByNow,
+            doneCount: doneCount,
+            totalDue: totalDue,
+            untrackedCount: untrackedCount,
+            pendingCount: pendingCount,
+            personality: personality,
+          );
+        } else {
+          // No data at all — minimal ping
+          final notifId = 8000000 + (DateTime.now().millisecondsSinceEpoch % 999999);
+          await NotificationService.showEgoNotification(
+            id: notifId,
+            title: '🧠 Ego check — $triggerTime',
+            body: 'App khol — aaj ka performance check karna hai!',
+            fullText: 'App khol — aaj ka performance check karna hai!',
+          );
+        }
+      } catch (_) {}
     }
   }
 
-  // ── Josh Auto Reminder ────────────────────────────────────────
-  // Calls Gemini API with upcoming tasks context
-  // Shows motivational notification
-  static Future<void> _runJoshAutoReminder(String triggerTime, Map<String, dynamic> inputData) async {
+  // ── Josh Auto Reminder ─────────────────────────────────────────
+  static Future<void> _runJoshAutoReminder(String triggerTime) async {
+    SharedPreferences? prefs;
+    String personality = 'energetic';
+    List<Map<String, dynamic>> upcomingTasks = [];
+    Map<String, dynamic> dailyScore = {'done': 0, 'total': 0, 'score': 0};
+
     try {
-      final prefs = await SharedPreferences.getInstance();
+      prefs = await SharedPreferences.getInstance();
       final dataJson = prefs.getString(PrefKeys.appData);
       if (dataJson == null) return;
 
-      final appData = jsonDecode(dataJson) as Map<String, dynamic>;
+      final appData  = jsonDecode(dataJson) as Map<String, dynamic>;
       final settings = appData['settings'] as Map<String, dynamic>? ?? {};
 
       if (settings['joshAutoEnabled'] != true) return;
 
       final apiKey = _getAvailableApiKey(settings);
-      if (apiKey == null || apiKey.isEmpty) return;
+      personality  = settings['joshPersonality'] as String? ?? 'energetic';
 
       final today = _getTodayStr();
-      final upcomingTasks = _getUpcomingTasks(appData, triggerTime, today);
-      final totalUpcoming = upcomingTasks.length;
+      upcomingTasks = _getUpcomingTasks(appData, triggerTime, today);
+      dailyScore    = _getDailyScore(appData, today);
 
-      final personality = settings['joshPersonality'] as String? ?? 'energetic';
-      final lifeGoals = settings['egoLifeGoals'] as String? ?? '';
-      final negativeWords = settings['egoNegativeWords'] as String? ?? '';
-      final model = settings['geminiModel'] as String? ?? 'gemini-2.5-flash';
-      final searchEnabled = settings['geminiSearchEnabled'] != false;
-      final joshPrompt = settings['joshPrompt'] as String? ?? '';
+      // ── Try Gemini first ──────────────────────────────────────
+      if (apiKey != null && apiKey.isNotEmpty) {
+        final lifeGoals    = settings['egoLifeGoals']    as String? ?? '';
+        final negativeWords= settings['egoNegativeWords']as String? ?? '';
+        final model        = settings['geminiModel']     as String? ?? 'gemini-2.5-flash';
+        final searchEnabled= settings['geminiSearchEnabled'] != false;
+        final joshPrompt   = settings['joshPrompt']      as String? ?? '';
 
-      final dailyScore = _getDailyScore(appData, today);
+        final systemPrompt = _buildJoshSystemPrompt(personality, lifeGoals, negativeWords, joshPrompt);
+        final userContent  = _buildJoshUserContent(
+          triggerTime, upcomingTasks, upcomingTasks.length, dailyScore, lifeGoals, negativeWords,
+        );
 
-      final systemPrompt = _buildJoshSystemPrompt(personality, lifeGoals, negativeWords, joshPrompt);
-      final userContent = _buildJoshUserContent(
-        triggerTime, upcomingTasks, totalUpcoming, dailyScore, lifeGoals, negativeWords,
+        String? fullResponse;
+        try {
+          fullResponse = await _callGemini(
+            apiKey, model, systemPrompt, userContent, 600, searchEnabled,
+          ).timeout(const Duration(seconds: 25));
+        } catch (_) {
+          fullResponse = null;
+        }
+
+        if (fullResponse != null && fullResponse.isNotEmpty) {
+          // ── Gemini succeeded — show full AI notification ──────
+          final lines    = fullResponse.trim().split('\n').where((l) => l.trim().isNotEmpty).toList();
+          final headline = lines.isNotEmpty
+              ? lines[0].replaceAll(RegExp(r'[*_#]'), '').substring(0, min(90, lines[0].length))
+              : 'Aaj ke tasks yaad hain? 💪';
+          final notifBody= lines.length > 1
+              ? lines.sublist(1).join('\n').trim()
+              : fullResponse.trim();
+
+          final notifId = 9000000 + (DateTime.now().millisecondsSinceEpoch % 999999);
+          await NotificationService.showJoshNotification(
+            id: notifId, title: '💪 $headline', body: notifBody, fullText: fullResponse,
+          );
+
+          await _savePendingConversation(prefs, PrefKeys.pendingJoshConversations, {
+            'id':          'jc_auto_bg_${DateTime.now().millisecondsSinceEpoch}',
+            'type':        'auto_reminder',
+            'triggerTime': triggerTime,
+            'date':        today,
+            'timestamp':   DateTime.now().millisecondsSinceEpoch,
+            'scoreLabel':  '💪 Tera-Josh Auto — ${upcomingTasks.length} tasks | $triggerTime',
+            'response':    fullResponse,
+            'headline':    headline,
+            'source':      'background',
+          });
+          return; // Done — Gemini succeeded
+        }
+      }
+
+      // ── Gemini failed / no key — show local-data fallback ────
+      await _showJoshFallbackNotification(
+        triggerTime: triggerTime,
+        upcomingTasks: upcomingTasks,
+        dailyScore: dailyScore,
+        personality: personality,
       );
 
-      final fullResponse = await _callGemini(apiKey, model, systemPrompt, userContent, 600, searchEnabled);
-      if (fullResponse == null) return;
-
-      final lines = fullResponse.trim().split('\n').where((l) => l.trim().isNotEmpty).toList();
-      final headline = lines.isNotEmpty
-          ? lines[0].replaceAll(RegExp(r'[*_#]'), '').substring(0, min(90, lines[0].length))
-          : 'Aaj ke tasks yaad hain? 💪';
-      final notifBody = lines.length > 1
-          ? lines.sublist(1).join('\n').trim()
-          : fullResponse.trim();
-
-      final notifId = 9000000 + (DateTime.now().millisecondsSinceEpoch % 999999);
-      await NotificationService.showJoshNotification(
-        id: notifId,
-        title: '💪 $headline',
-        body: notifBody,
-        fullText: fullResponse,
-      );
-
-      await _savePendingConversation(prefs, PrefKeys.pendingJoshConversations, {
-        'id': 'jc_auto_bg_${DateTime.now().millisecondsSinceEpoch}',
-        'type': 'auto_reminder',
-        'triggerTime': triggerTime,
-        'date': today,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
-        'scoreLabel': '💪 Tera-Josh Auto — $totalUpcoming tasks | $triggerTime',
-        'response': fullResponse,
-        'headline': headline,
-        'source': 'background',
-      });
+      if (prefs != null) {
+        final today = _getTodayStr();
+        await _savePendingConversation(prefs, PrefKeys.pendingJoshConversations, {
+          'id':          'jc_auto_bg_fallback_${DateTime.now().millisecondsSinceEpoch}',
+          'type':        'auto_fallback',
+          'triggerTime': triggerTime,
+          'date':        today,
+          'timestamp':   DateTime.now().millisecondsSinceEpoch,
+          'scoreLabel':  '💪 Josh Fallback | ${upcomingTasks.length} tasks | $triggerTime',
+          'response':    _buildJoshFallbackText(upcomingTasks, dailyScore, personality),
+          'headline':    'App khol — Josh poori tayaari ke saath wait kar raha hai!',
+          'source':      'background_fallback',
+        });
+      }
 
     } catch (e) {
       print('[BackgroundService] Josh error: $e');
+      try {
+        if (upcomingTasks.isNotEmpty) {
+          await _showJoshFallbackNotification(
+            triggerTime: triggerTime,
+            upcomingTasks: upcomingTasks,
+            dailyScore: dailyScore,
+            personality: personality,
+          );
+        } else {
+          final notifId = 9000000 + (DateTime.now().millisecondsSinceEpoch % 999999);
+          await NotificationService.showJoshNotification(
+            id: notifId,
+            title: '💪 Josh ka $triggerTime Reminder',
+            body: 'App khol — Josh aaj ke tasks ke saath tera wait kar raha hai!',
+            fullText: 'App khol — Josh aaj ke tasks ke saath tera wait kar raha hai!',
+          );
+        }
+      } catch (_) {}
     }
   }
 
-  // ── Gemini API Call ───────────────────────────────────────────
-  static Future<String?> _callGemini(
-    String apiKey,
-    String model,
-    String systemPrompt,
-    String userContent,
-    int maxTokens,
-    bool searchEnabled,
-  ) async {
-    try {
-      final url = 'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey';
+  // ── EGO Fallback Notification ──────────────────────────────────
+  // Fires when Gemini API fails. Uses SharedPreferences data only.
+  // Personality-aware text — not just "app me aao", real data.
+  static Future<void> _showEgoFallbackNotification({
+    required String triggerTime,
+    required List<Map<String, dynamic>> tasksDueByNow,
+    required int doneCount,
+    required int totalDue,
+    required int untrackedCount,
+    required int pendingCount,
+    required String personality,
+  }) async {
+    final pct = totalDue > 0 ? ((doneCount / totalDue) * 100).round() : 0;
+    final body = _buildEgoFallbackText(
+      tasksDueByNow, doneCount, totalDue, untrackedCount, pendingCount, personality,
+    );
 
-      final body = <String, dynamic>{
-        'systemInstruction': {
-          'parts': [{'text': systemPrompt}]
-        },
-        'contents': [
-          {
-            'role': 'user',
-            'parts': [{'text': userContent}]
-          }
-        ],
-        'generationConfig': {
-          'temperature': 0.85,
-          'maxOutputTokens': maxTokens,
-          'thinkingConfig': {'thinkingBudget': 0},
-        },
-      };
-
-      if (searchEnabled) {
-        body['tools'] = [{'google_search': {}}];
+    String title;
+    if (personality == 'beast') {
+      if (pct == 0 && totalDue > 0) {
+        title = '🧠 0% done bhai?! ($doneCount/$totalDue) — Ego wait kar raha hai!';
+      } else if (pct >= 80) {
+        title = '🧠 $pct% — acha hai, par Ego full report dega app mein!';
+      } else {
+        title = '🧠 Sirf $pct%? ($doneCount/$totalDue done) — Ego ka data ready hai!';
       }
-
-      final response = await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 30));
-
-      if (response.statusCode != 200) return null;
-
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final candidates = data['candidates'] as List<dynamic>? ?? [];
-      if (candidates.isEmpty) return null;
-
-      final content = candidates[0]['content'] as Map<String, dynamic>? ?? {};
-      final parts = content['parts'] as List<dynamic>? ?? [];
-      return parts
-          .map((p) => (p as Map<String, dynamic>)['text'] as String? ?? '')
-          .join('');
-    } catch (e) {
-      print('[BackgroundService] Gemini error: $e');
-      return null;
+    } else if (personality == 'balanced') {
+      title = '🧠 Reality Check $triggerTime — $doneCount/$totalDue tasks ($pct%)';
+    } else {
+      title = '🧠 Tu aacha kar raha hai — $doneCount/$totalDue done! App khol 💜';
     }
+
+    final notifId = 8000000 + (DateTime.now().millisecondsSinceEpoch % 999999);
+    await NotificationService.showEgoNotification(
+      id: notifId,
+      title: title,
+      body: body,
+      fullText: '$title\n\n$body',
+    );
   }
 
-  // ── Context builders ──────────────────────────────────────────
+  static String _buildEgoFallbackText(
+    List<Map<String, dynamic>> tasksDueByNow,
+    int doneCount, int totalDue,
+    int untrackedCount, int pendingCount,
+    String personality,
+  ) {
+    final bodyParts = <String>[];
+    final pct = totalDue > 0 ? ((doneCount / totalDue) * 100).round() : 0;
+
+    // Show untracked tasks (worst — window closed, not done)
+    final untrackedTasks = tasksDueByNow.where((t) => t['isUntracked'] == true).toList();
+    if (untrackedTasks.isNotEmpty) {
+      final names = untrackedTasks
+          .map((t) => t['name'] as String? ?? '')
+          .where((n) => n.isNotEmpty)
+          .join(', ');
+      bodyParts.add(personality == 'beast'
+          ? '⚠️ Untracked (window gone): $names'
+          : '⚠️ Window close ho gayi: $names');
+    }
+
+    // Show pending tasks (window still open)
+    final pendingTasks = tasksDueByNow.where((t) => t['isPending'] == true).toList();
+    if (pendingTasks.isNotEmpty) {
+      final pendingStr = pendingTasks
+          .map((t) => '${t['name']} (→${t['workingWindowEnd']})')
+          .where((s) => s.isNotEmpty)
+          .join(', ');
+      bodyParts.add('⏳ Abhi bhi time hai: $pendingStr');
+    }
+
+    // Show done count
+    bodyParts.add('✅ Done: $doneCount/$totalDue ($pct%)');
+
+    // Closing line — personality-matched
+    if (personality == 'beast') {
+      bodyParts.add('\nApp khol — Ego full roast de raha hai wahan, koi bahaana nahi!');
+    } else if (personality == 'balanced') {
+      bodyParts.add('\nApp khol — Ego full analysis aur next steps ready hain!');
+    } else {
+      bodyParts.add('\nApp khol — Ego tujhe encourage karna chahta hai, poori baat wahan! 💜');
+    }
+
+    return bodyParts.join('\n');
+  }
+
+  // ── JOSH Fallback Notification ─────────────────────────────────
+  static Future<void> _showJoshFallbackNotification({
+    required String triggerTime,
+    required List<Map<String, dynamic>> upcomingTasks,
+    required Map<String, dynamic> dailyScore,
+    required String personality,
+  }) async {
+    final body = _buildJoshFallbackText(upcomingTasks, dailyScore, personality);
+
+    String title;
+    if (personality == 'beast') {
+      title = '💪 CHAL UTH JA — $triggerTime | ${upcomingTasks.length} tasks abhi baki!';
+    } else if (personality == 'calm') {
+      title = '💪 Josh ka $triggerTime Reminder — ek ek kaam, aage badh';
+    } else {
+      title = '💪 Josh reminder — $triggerTime | Tu kar sakta hai! 🔥';
+    }
+
+    final notifId = 9000000 + (DateTime.now().millisecondsSinceEpoch % 999999);
+    await NotificationService.showJoshNotification(
+      id: notifId,
+      title: title,
+      body: body,
+      fullText: '$title\n\n$body',
+    );
+  }
+
+  static String _buildJoshFallbackText(
+    List<Map<String, dynamic>> upcomingTasks,
+    Map<String, dynamic> dailyScore,
+    String personality,
+  ) {
+    final bodyParts = <String>[];
+    final todayDone  = dailyScore['done']  as int? ?? 0;
+    final todayTotal = dailyScore['total'] as int? ?? 0;
+
+    // Show up to 5 upcoming tasks with their time slots
+    final tasksToShow = upcomingTasks.take(5).toList();
+    if (tasksToShow.isNotEmpty) {
+      for (final task in tasksToShow) {
+        final name     = task['name']            as String? ?? '';
+        final start    = task['scheduledTime']   as String? ?? '';
+        final end      = task['workingWindowEnd']as String? ?? '';
+        final duration = task['duration']        as int?    ?? 0;
+        if (name.isEmpty) continue;
+        final timeStr  = (start.isNotEmpty && end.isNotEmpty) ? ' ($start→$end)' : '';
+        final durStr   = duration > 0 ? ' — ${duration}min' : '';
+        bodyParts.add('• $name$timeStr$durStr');
+      }
+      if (upcomingTasks.length > 5) {
+        bodyParts.add('  ...aur ${upcomingTasks.length - 5} aur tasks');
+      }
+    } else {
+      bodyParts.add('Koi upcoming tasks nahi — kal ka plan strong banao!');
+    }
+
+    // Today's current score
+    if (todayTotal > 0) {
+      bodyParts.add('\nAaj abhi tak: $todayDone/$todayTotal done');
+    }
+
+    // Closing line
+    if (personality == 'beast') {
+      bodyParts.add('App khol — Josh poori fire ke saath tera wait kar raha hai!');
+    } else if (personality == 'calm') {
+      bodyParts.add('App khol — Josh calm aur focused guidance de raha hai wahan!');
+    } else {
+      bodyParts.add('App khol — Josh ka full motivation wahan mil raha hai! 🚀');
+    }
+
+    return bodyParts.join('\n');
+  }
+
+  // ── Gemini API Call ────────────────────────────────────────────
+  static Future<String?> _callGemini(
+    String apiKey, String model, String systemPrompt,
+    String userContent, int maxTokens, bool searchEnabled,
+  ) async {
+    final url = 'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey';
+
+    final body = <String, dynamic>{
+      'systemInstruction': {
+        'parts': [{'text': systemPrompt}]
+      },
+      'contents': [
+        {'role': 'user', 'parts': [{'text': userContent}]}
+      ],
+      'generationConfig': {
+        'temperature': 0.85,
+        'maxOutputTokens': maxTokens,
+        'thinkingConfig': {'thinkingBudget': 0},
+      },
+    };
+
+    if (searchEnabled) {
+      body['tools'] = [{'google_search': {}}];
+    }
+
+    final response = await http.post(
+      Uri.parse(url),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 28));
+
+    if (response.statusCode != 200) return null;
+
+    final data       = jsonDecode(response.body) as Map<String, dynamic>;
+    final candidates = data['candidates'] as List<dynamic>? ?? [];
+    if (candidates.isEmpty) return null;
+
+    final content = candidates[0]['content'] as Map<String, dynamic>? ?? {};
+    final parts   = content['parts'] as List<dynamic>? ?? [];
+    return parts
+        .map((p) => (p as Map<String, dynamic>)['text'] as String? ?? '')
+        .join('');
+  }
+
+  // ── Context builders ───────────────────────────────────────────
 
   static String _getTodayStr() {
     final now = DateTime.now();
@@ -251,7 +580,7 @@ class BackgroundService {
   }
 
   static String? _getAvailableApiKey(Map<String, dynamic> settings) {
-    final key1 = settings['coachApiKey'] as String? ?? '';
+    final key1 = settings['coachApiKey']  as String? ?? '';
     final key2 = settings['coachApiKey2'] as String? ?? '';
     final key3 = settings['coachApiKey3'] as String? ?? '';
     if (key1.isNotEmpty) return key1;
@@ -262,8 +591,8 @@ class BackgroundService {
 
   static List<Map<String, dynamic>> _getTasksDueByNow(
     Map<String, dynamic> appData, String triggerTime, String today) {
-    final tasks = appData['tasks'] as List<dynamic>? ?? [];
-    final history = appData['history'] as List<dynamic>? ?? [];
+    final tasks      = appData['tasks']      as List<dynamic>? ?? [];
+    final history    = appData['history']    as List<dynamic>? ?? [];
     final categories = appData['categories'] as List<dynamic>? ?? [];
 
     return tasks
@@ -275,30 +604,30 @@ class BackgroundService {
           return startTime.compareTo(triggerTime) <= 0;
         })
         .map((t) {
-          final task = t as Map<String, dynamic>;
+          final task   = t as Map<String, dynamic>;
           final taskId = task['id'] as String;
-          final entry = history.cast<Map<String, dynamic>>().firstWhere(
+          final entry  = history.cast<Map<String, dynamic>>().firstWhere(
             (h) => h['taskId'] == taskId && h['date'] == today,
             orElse: () => <String, dynamic>{},
           );
-          final done = entry['completed'] == true;
-          final windowEnd = task['workingWindowEnd'] as String? ?? '';
+          final done         = entry['completed'] == true;
+          final windowEnd    = task['workingWindowEnd'] as String? ?? '';
           final windowEndAfterNow = windowEnd.isNotEmpty && windowEnd.compareTo(triggerTime) > 0;
 
           final catId = task['categoryId'] as String? ?? '';
-          final cat = categories.cast<Map<String, dynamic>>().firstWhere(
+          final cat   = categories.cast<Map<String, dynamic>>().firstWhere(
             (c) => c['id'] == catId, orElse: () => {'name': ''});
 
           return <String, dynamic>{
-            'name': task['name'],
-            'category': cat['name'],
-            'scheduledTime': task['workingWindowStart'] ?? task['scheduledTime'],
+            'name':             task['name'],
+            'category':         cat['name'],
+            'scheduledTime':    task['workingWindowStart'] ?? task['scheduledTime'],
             'workingWindowEnd': windowEnd,
-            'whyMatters': task['whyMatters'] ?? '',
-            'completed': done,
-            'effortScore': done ? (entry['effortScore'] ?? 0) : 0,
-            'isUntracked': !done && windowEnd.isNotEmpty && windowEnd.compareTo(triggerTime) <= 0,
-            'isPending': !done && windowEndAfterNow,
+            'whyMatters':       task['whyMatters'] ?? '',
+            'completed':        done,
+            'effortScore':      done ? (entry['effortScore'] ?? 0) : 0,
+            'isUntracked':      !done && windowEnd.isNotEmpty && windowEnd.compareTo(triggerTime) <= 0,
+            'isPending':        !done && windowEndAfterNow,
           };
         })
         .toList();
@@ -306,8 +635,8 @@ class BackgroundService {
 
   static List<Map<String, dynamic>> _getUpcomingTasks(
     Map<String, dynamic> appData, String triggerTime, String today) {
-    final tasks = appData['tasks'] as List<dynamic>? ?? [];
-    final history = appData['history'] as List<dynamic>? ?? [];
+    final tasks      = appData['tasks']      as List<dynamic>? ?? [];
+    final history    = appData['history']    as List<dynamic>? ?? [];
     final categories = appData['categories'] as List<dynamic>? ?? [];
 
     return tasks
@@ -319,41 +648,39 @@ class BackgroundService {
           return startTime.compareTo(triggerTime) >= 0;
         })
         .map((t) {
-          final task = t as Map<String, dynamic>;
+          final task   = t as Map<String, dynamic>;
           final taskId = task['id'] as String;
-          final entry = history.cast<Map<String, dynamic>>().firstWhere(
+          final entry  = history.cast<Map<String, dynamic>>().firstWhere(
             (h) => h['taskId'] == taskId && h['date'] == today,
             orElse: () => <String, dynamic>{},
           );
-          final done = entry['completed'] == true;
-
+          final done  = entry['completed'] == true;
           final catId = task['categoryId'] as String? ?? '';
-          final cat = categories.cast<Map<String, dynamic>>().firstWhere(
+          final cat   = categories.cast<Map<String, dynamic>>().firstWhere(
             (c) => c['id'] == catId, orElse: () => {'name': ''});
 
           return <String, dynamic>{
-            'name': task['name'],
-            'category': cat['name'],
-            'scheduledTime': task['workingWindowStart'] ?? task['scheduledTime'],
+            'name':             task['name'],
+            'category':         cat['name'],
+            'scheduledTime':    task['workingWindowStart'] ?? task['scheduledTime'],
             'workingWindowEnd': task['workingWindowEnd'] ?? '',
-            'whyMatters': task['whyMatters'] ?? '',
-            'completed': done,
-            'duration': task['duration'] ?? 0,
+            'whyMatters':       task['whyMatters'] ?? '',
+            'completed':        done,
+            'duration':         task['duration'] ?? 0,
           };
         })
         .toList();
   }
 
   static Map<String, dynamic> _getDailyScore(Map<String, dynamic> appData, String today) {
-    final tasks = (appData['tasks'] as List<dynamic>? ?? [])
-        .where((t) => (t as Map)['active'] != false)
-        .toList();
+    final tasks   = (appData['tasks'] as List<dynamic>? ?? [])
+        .where((t) => (t as Map)['active'] != false).toList();
     final history = appData['history'] as List<dynamic>? ?? [];
 
     int done = 0;
     for (final task in tasks) {
       final taskId = (task as Map)['id'] as String;
-      final entry = history.cast<Map<String, dynamic>>().firstWhere(
+      final entry  = history.cast<Map<String, dynamic>>().firstWhere(
         (h) => h['taskId'] == taskId && h['date'] == today,
         orElse: () => <String, dynamic>{},
       );
@@ -361,11 +688,12 @@ class BackgroundService {
     }
 
     final total = tasks.length;
-    final pct = total > 0 ? (done / total * 100).round() : 0;
+    final pct   = total > 0 ? (done / total * 100).round() : 0;
     return {'done': done, 'total': total, 'score': pct};
   }
 
-  static String _buildEgoSystemPrompt(String personality, String lifeGoals, String negativeWords) {
+  static String _buildEgoSystemPrompt(
+    String personality, String lifeGoals, String negativeWords) {
     String tone;
     switch (personality) {
       case 'beast':
@@ -377,7 +705,7 @@ class BackgroundService {
         tone = 'Tu ek honest Hinglish coach hai. Direct but not cruel. '
             'Hindi aur English naturally mix karo. Balanced — appreciate effort, address failures.';
         break;
-      default: // gentle
+      default:
         tone = 'Tu ek encouraging Hinglish coach hai. Warm but real. '
             'Positive framing. Failures ko growth opportunity se connect kar.';
     }
@@ -391,7 +719,7 @@ LOG NE JO NEGATIVE KAHA HAI USER KE BAARE MEIN:
 ${negativeWords.isNotEmpty ? negativeWords : 'Not set by user yet'}
 
 SPECIAL INSTRUCTIONS:
-- Task names aur categories se context infer karo (e.g., PHYSIC > Morning Workout = body transformation)
+- Task names aur categories se context infer karo
 - Har task ke "whyMatters" ko naturally weave karo
 - Life goals se har incomplete task ko directly connect karo
 - Negative words ko "prove them wrong energy" mein convert karo
@@ -403,10 +731,8 @@ SPECIAL INSTRUCTIONS:
   static String _buildEgoUserContent(
     String triggerTime,
     List<Map<String, dynamic>> tasksDueByNow,
-    int doneCount,
-    int totalDue,
-    int pendingCount,
-    int untrackedCount,
+    int doneCount, int totalDue,
+    int pendingCount, int untrackedCount,
     Map<String, dynamic> appData,
   ) {
     final taskLines = tasksDueByNow.map((t) {
@@ -458,7 +784,7 @@ NEGATIVE LOG NE KAHA: ${negativeWords.isNotEmpty ? negativeWords : 'Not set'}
 
 Format: Line 1 = warm headline (max 90 chars), blank line, thoughtful task-by-task guidance.''';
 
-      default: // energetic
+      default:
         return '''Tu ek energetic, positive Hinglish motivator hai.
 High energy, infectious enthusiasm. "Tu kar sakta hai!" vibes.
 
@@ -500,7 +826,7 @@ Blank line
 Detailed reminder + motivation (each upcoming task separately, connect to life goals)''';
   }
 
-  // ── Save pending conversation ─────────────────────────────────
+  // ── Save pending conversation ──────────────────────────────────
   static Future<void> _savePendingConversation(
     SharedPreferences prefs, String key, Map<String, dynamic> conv) async {
     final existing = prefs.getString(key);
@@ -516,18 +842,14 @@ Detailed reminder + motivation (each upcoming task separately, connect to life g
   /// Called by WebView when it wants pending conversations
   static Future<Map<String, dynamic>> getPendingConversations() async {
     final prefs = await SharedPreferences.getInstance();
-    List<dynamic> ego = [];
+    List<dynamic> ego  = [];
     List<dynamic> josh = [];
 
-    final egoJson = prefs.getString(PrefKeys.pendingEgoConversations);
-    if (egoJson != null) {
-      try { ego = jsonDecode(egoJson) as List<dynamic>; } catch (_) {}
-    }
+    final egoJson  = prefs.getString(PrefKeys.pendingEgoConversations);
+    if (egoJson  != null) { try { ego  = jsonDecode(egoJson)  as List<dynamic>; } catch (_) {} }
 
     final joshJson = prefs.getString(PrefKeys.pendingJoshConversations);
-    if (joshJson != null) {
-      try { josh = jsonDecode(joshJson) as List<dynamic>; } catch (_) {}
-    }
+    if (joshJson != null) { try { josh = jsonDecode(joshJson) as List<dynamic>; } catch (_) {} }
 
     return {'egoConversations': ego, 'joshConversations': josh};
   }
