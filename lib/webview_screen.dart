@@ -278,7 +278,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         final time = entry['time'] as String?;
         if (time == null || time.isEmpty) continue;
         await _scheduleAutoTask(
-          taskPrefix: TaskNames.egoAutoPrefix,
+           taskPrefix: 'ego_auto_',
           time: time,
           inputData: config,
         );
@@ -291,7 +291,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         final time = entry['time'] as String?;
         if (time == null || time.isEmpty) continue;
         await _scheduleAutoTask(
-          taskPrefix: TaskNames.joshAutoPrefix,
+          taskPrefix: 'josh_auto_',
           time: time,
           inputData: config,
         );
