@@ -1010,4 +1010,4 @@ Detailed reminder + motivation (each upcoming task separately, connect to life g
     }
   }
 }
-}
+
