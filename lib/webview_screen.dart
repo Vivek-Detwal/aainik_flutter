@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
-import 'package:aainik_app/main.dart' show alarmCallback;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'background_service.dart';
 import 'notification_service.dart';
@@ -50,7 +48,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     super.dispose();
   }
 
- @override
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       // App came to foreground — deliver pending AI conversations
@@ -116,7 +114,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
               onLoadStart: (controller, url) {
                 setState(() => _isLoading = true);
               },
-             onLoadStop: (controller, url) {
+              onLoadStop: (controller, url) {
                 setState(() => _isLoading = false);
                 // Deliver pending conversations + check missed alarms after page loads
                 Future.delayed(const Duration(milliseconds: 2000), () {
@@ -330,7 +328,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       }
     }
   }
-Future<void> _scheduleAutoTask({
+  Future<void> _scheduleAutoTask({
     required String taskPrefix,
     required String time,
     required Map<String, dynamic> inputData,
@@ -353,32 +351,37 @@ Future<void> _scheduleAutoTask({
     final alarmId= isEgo ? AlarmIds.forEgo(time) : AlarmIds.forJosh(time);
 
     try {
-      await AndroidAlarmManager.oneShotAt(
-        target,
-        alarmId,
-        alarmCallback,          // top-level callback in main.dart
-        exact: true,            // no deferral
-        wakeup: true,           // wake device from Doze
-        rescheduleOnReboot: true, // re-register after phone restart
-        alarmClock: true,       // highest Android priority, shown in status bar
-      );
+      final channel = const MethodChannel('aainik/alarm');
+      await channel.invokeMethod('schedule', {
+        'hour': hour,
+        'minute': minute,
+        'alarmId': alarmId,
+        'isEgo': isEgo,
+      });
       debugPrint('[FlutterBridge] Alarm $alarmId set for ${isEgo ? 'Ego' : 'Josh'} at $target');
     } catch (e) {
       debugPrint('[FlutterBridge] scheduleAutoTask error: $e');
     }
   }
- Future<void> _cancelAllAutoTasks() async {
+  Future<void> _cancelAllAutoTasks() async {
     try {
       // Only cancel the alarm IDs we actually scheduled — NOT a 2880-call loop
       final schedule  = await BackgroundService.getSchedule();
       final egoTimes  = schedule['ego']  ?? [];
       final joshTimes = schedule['josh'] ?? [];
 
+      final channel = const MethodChannel('aainik/alarm');
       for (final time in egoTimes) {
-        await AndroidAlarmManager.cancel(AlarmIds.forEgo(time));
+        await channel.invokeMethod('cancel', {
+          'alarmId': AlarmIds.forEgo(time),
+          'isEgo': true,
+        });
       }
       for (final time in joshTimes) {
-        await AndroidAlarmManager.cancel(AlarmIds.forJosh(time));
+        await channel.invokeMethod('cancel', {
+          'alarmId': AlarmIds.forJosh(time),
+          'isEgo': false,
+        });
       }
       debugPrint(
           '[FlutterBridge] Cancelled ${egoTimes.length + joshTimes.length} alarms');
