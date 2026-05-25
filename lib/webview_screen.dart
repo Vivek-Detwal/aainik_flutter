@@ -31,8 +31,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
       statusBarColor: Color(0xFF0f0f1a),
       statusBarIconBrightness: Brightness.light,
-      navigationBarColor: Color(0xFF0f0f1a),
-      navigationBarIconBrightness: Brightness.light,
+      systemNavigationBarColor: Color(0xFF0f0f1a),
+      systemNavigationBarIconBrightness: Brightness.light,
     ));
   }
 
@@ -93,7 +93,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
                 verticalScrollBarEnabled: false,
                 horizontalScrollBarEnabled: false,
                 transparentBackground: false,
-                // Allow HTTP for local files but enforce HTTPS for API calls
                 mixedContentMode: MixedContentMode.MIXED_CONTENT_NEVER_ALLOW,
                 useWideViewPort: true,
                 loadWithOverviewMode: true,
@@ -157,8 +156,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     _webViewController = controller;
 
     // ── JS Handler: syncAppData ──────────────────────────────
-    // Called every time saveData() runs in app.js
-    // Stores full appData JSON in SharedPreferences for background tasks
     controller.addJavaScriptHandler(
       handlerName: 'syncAppData',
       callback: (args) async {
@@ -176,8 +173,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     );
 
     // ── JS Handler: scheduleBackgroundTasks ─────────────────
-    // Called when notification schedule changes
-    // Registers/updates WorkManager tasks for Ego + Josh auto-mode
     controller.addJavaScriptHandler(
       handlerName: 'scheduleBackgroundTasks',
       callback: (args) async {
@@ -194,7 +189,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     );
 
     // ── JS Handler: requestPendingConversations ──────────────
-    // Called on app load to get any AI results from background tasks
     controller.addJavaScriptHandler(
       handlerName: 'requestPendingConversations',
       callback: (args) async {
@@ -203,7 +197,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     );
 
     // ── JS Handler: clearPendingConversations ────────────────
-    // Called after WebView has consumed pending conversations
     controller.addJavaScriptHandler(
       handlerName: 'clearPendingConversations',
       callback: (args) async {
@@ -223,7 +216,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     final joshTimes = (config['joshTimes'] as List<dynamic>? ?? [])
         .cast<Map<String, dynamic>>();
 
-    // Cancel all existing auto-mode tasks before rescheduling
     await _cancelAllAutoTasks();
 
     if (egoEnabled) {
@@ -253,7 +245,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     }
   }
 
-  /// Schedule a OneTimeWorkRequest that fires at the given HH:MM time
   Future<void> _scheduleAutoTask({
     required String taskPrefix,
     required String time,
@@ -266,10 +257,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     final hour = int.tryParse(parts[0]) ?? 0;
     final minute = int.tryParse(parts[1]) ?? 0;
 
-    // Calculate next occurrence of this time
     var target = DateTime(now.year, now.month, now.day, hour, minute, 0);
     if (!target.isAfter(now.add(const Duration(minutes: 1)))) {
-      // Already passed today — schedule for tomorrow
       target = target.add(const Duration(days: 1));
     }
 
@@ -288,7 +277,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
           requiresDeviceIdle: false,
         ),
         existingWorkPolicy: ExistingWorkPolicy.replace,
-        // inputData is limited to simple types — pass minimal needed info
         inputData: {
           'triggerTime': time,
           'taskType': taskPrefix.contains('ego') ? 'ego' : 'josh',
@@ -303,7 +291,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     try {
       await Workmanager().cancelByTag(TaskNames.egoAutoPrefix);
       await Workmanager().cancelByTag(TaskNames.joshAutoPrefix);
-      // Also cancel by individual known names if any exist
     } catch (e) {
       debugPrint('[FlutterBridge] cancelAllAutoTasks error: $e');
     }
