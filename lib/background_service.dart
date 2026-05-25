@@ -154,7 +154,7 @@ class BackgroundService {
         try {
           fullResponse = await _callGemini(
             apiKey, model, systemPrompt, userContent, 800, searchEnabled,
-          ).timeout(const Duration(seconds: 25));
+          ).timeout(const Duration(seconds: 120));
         } catch (_) {
           fullResponse = null;
         }
@@ -287,7 +287,7 @@ class BackgroundService {
         try {
           fullResponse = await _callGemini(
             apiKey, model, systemPrompt, userContent, 600, searchEnabled,
-          ).timeout(const Duration(seconds: 25));
+          ).timeout(const Duration(seconds: 120));
         } catch (_) {
           fullResponse = null;
         }
@@ -557,7 +557,7 @@ class BackgroundService {
       Uri.parse(url),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(body),
-    ).timeout(const Duration(seconds: 28));
+    ).timeout(const Duration(seconds: 115));
 
     if (response.statusCode != 200) return null;
 
