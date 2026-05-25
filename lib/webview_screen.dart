@@ -25,6 +25,10 @@ class WebViewScreen extends StatefulWidget {
 class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserver {
   InAppWebViewController? _webViewController;
   bool _isLoading = true;
+   // ── Missed-alarm notification queue ─────────────────────────
+  Timer? _queueTimer;
+  bool   _processingQueue = false;
+  final  List<Map<String, dynamic>> _notificationQueue = [];
 
   @override
   void initState() {
@@ -41,15 +45,22 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
   @override
   void dispose() {
+    _stopQueueProcessing();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  @override
+ @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // App came to foreground — deliver any pending AI conversations
+      // App came to foreground — deliver pending AI conversations
       _deliverPendingConversations();
+      // Check and queue any alarms missed while app was killed
+      _checkMissedAlarms();
+    }
+    if (state == AppLifecycleState.paused) {
+      // App going to background — pause the queue timer
+      _stopQueueProcessing();
     }
   }
 
@@ -105,10 +116,13 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
               onLoadStart: (controller, url) {
                 setState(() => _isLoading = true);
               },
-              onLoadStop: (controller, url) {
+             onLoadStop: (controller, url) {
                 setState(() => _isLoading = false);
-                // Deliver any pending conversations after page loads
-                Future.delayed(const Duration(milliseconds: 2000), _deliverPendingConversations);
+                // Deliver pending conversations + check missed alarms after page loads
+                Future.delayed(const Duration(milliseconds: 2000), () {
+                  _deliverPendingConversations();
+                  _checkMissedAlarms();
+                });
               },
               onPermissionRequest: (controller, request) async {
                 return PermissionResponse(
@@ -271,7 +285,24 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     final joshTimes = (config['joshTimes'] as List<dynamic>? ?? [])
         .cast<Map<String, dynamic>>();
 
+    // Save new schedule BEFORE cancelling old one
+    final newEgoTimes = egoEnabled
+        ? egoTimes
+            .map((e) => e['time'] as String? ?? '')
+            .where((t) => t.isNotEmpty)
+            .toList()
+        : <String>[];
+    final newJoshTimes = joshEnabled
+        ? joshTimes
+            .map((e) => e['time'] as String? ?? '')
+            .where((t) => t.isNotEmpty)
+            .toList()
+        : <String>[];
+
     await _cancelAllAutoTasks();
+    await BackgroundService.saveSchedule(newEgoTimes, newJoshTimes);
+    // Stamp now — alarms scheduled from this point forward
+    await BackgroundService.updateLastAlarmCheck();
 
     if (egoEnabled) {
       for (final entry in egoTimes) {
@@ -336,19 +367,93 @@ Future<void> _scheduleAutoTask({
       debugPrint('[FlutterBridge] scheduleAutoTask error: $e');
     }
   }
-  Future<void> _cancelAllAutoTasks() async {
-    // Cancel all possible ego and josh alarm IDs
-    // Alarm ID range: ego 10000–11439, josh 20000–21439
-    // We iterate all possible HH:MM combinations (1440 possibilities per type)
-    // but only actually cancel ones that exist — Android ignores unknown IDs.
+ Future<void> _cancelAllAutoTasks() async {
     try {
-      for (int minutes = 0; minutes < 1440; minutes++) {
-        await AndroidAlarmManager.cancel(AlarmIds.egoBase  + minutes);
-        await AndroidAlarmManager.cancel(AlarmIds.joshBase + minutes);
+      // Only cancel the alarm IDs we actually scheduled — NOT a 2880-call loop
+      final schedule  = await BackgroundService.getSchedule();
+      final egoTimes  = schedule['ego']  ?? [];
+      final joshTimes = schedule['josh'] ?? [];
+
+      for (final time in egoTimes) {
+        await AndroidAlarmManager.cancel(AlarmIds.forEgo(time));
       }
-      debugPrint('[FlutterBridge] All alarms cancelled');
+      for (final time in joshTimes) {
+        await AndroidAlarmManager.cancel(AlarmIds.forJosh(time));
+      }
+      debugPrint(
+          '[FlutterBridge] Cancelled ${egoTimes.length + joshTimes.length} alarms');
     } catch (e) {
       debugPrint('[FlutterBridge] cancelAllAutoTasks error: $e');
+    }
+  }
+
+  // ── Missed Alarm Detection & Queue System ─────────────────────
+
+  void _stopQueueProcessing() {
+    _queueTimer?.cancel();
+    _queueTimer = null;
+    _processingQueue = false;
+  }
+
+  Future<void> _checkMissedAlarms() async {
+    try {
+      final missed = await BackgroundService.getMissedAlarms();
+      await BackgroundService.updateLastAlarmCheck();
+
+      if (missed.isEmpty) return;
+
+      debugPrint('[WebViewScreen] ${missed.length} missed alarms → queuing');
+
+      // Add to back of queue (preserves any already-queued items)
+      _notificationQueue.addAll(missed.cast<Map<String, dynamic>>());
+
+      // Start processing if not already running
+      if (!_processingQueue) _startQueueProcessing();
+    } catch (e) {
+      debugPrint('[WebViewScreen] checkMissedAlarms error: $e');
+    }
+  }
+
+  void _startQueueProcessing() {
+    if (_processingQueue || _notificationQueue.isEmpty) return;
+    _processingQueue = true;
+    debugPrint(
+        '[WebViewScreen] Queue started — ${_notificationQueue.length} items');
+    _processNextQueueItem();
+  }
+
+  Future<void> _processNextQueueItem() async {
+    if (_notificationQueue.isEmpty) {
+      _processingQueue = false;
+      return;
+    }
+
+    final item        = _notificationQueue.removeAt(0);
+    final type        = item['type']  as String? ?? '';
+    final triggerTime = item['time']  as String? ?? '';
+    final date        = item['date']  as String? ?? '';
+
+    debugPrint(
+        '[WebViewScreen] Queue: processing $type @ $triggerTime ($date) — ${_notificationQueue.length} left');
+
+    try {
+      await BackgroundService.handleMissedAlarm(
+        type:        type,
+        triggerTime: triggerTime,
+        date:        date,
+      );
+    } catch (e) {
+      debugPrint('[WebViewScreen] processNextQueueItem error: $e');
+    }
+
+    if (_notificationQueue.isNotEmpty) {
+      // 62 seconds between items — Gemini limit is 5 req/min
+      debugPrint('[WebViewScreen] Next item in 62s');
+      _queueTimer =
+          Timer(const Duration(seconds: 62), _processNextQueueItem);
+    } else {
+      _processingQueue = false;
+      debugPrint('[WebViewScreen] Queue empty — all done');
     }
   }
 }
