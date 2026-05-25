@@ -52,6 +52,8 @@ class PrefKeys {
   static const String appData                 = 'aainik_app_data_v1';
   static const String pendingEgoConversations = 'aainik_pending_ego_convs';
   static const String pendingJoshConversations= 'aainik_pending_josh_convs';
+  static const String scheduledAlarms         = 'aainik_scheduled_alarms_v2'; // {"ego":["10:00"],"josh":["09:00"]}
+  static const String lastAlarmCheck          = 'aainik_last_alarm_check_v1'; // milliseconds int
 }
 
 /// ─────────────────────────────────────────────────────────────
@@ -112,7 +114,7 @@ class BackgroundService {
   }
 
   // ── Ego Auto Check ─────────────────────────────────────────────
-  static Future<void> _runEgoAutoCheck(String triggerTime) async {
+  static Future<void> _runEgoAutoCheck(String triggerTime, {String? overrideDate}) async {
     SharedPreferences? prefs;
     String personality = 'beast';
     List<Map<String, dynamic>> tasksDueByNow = [];
@@ -131,7 +133,7 @@ class BackgroundService {
       final apiKey = _getAvailableApiKey(settings);
       personality  = settings['autoCoachPersonality'] as String? ?? 'beast';
 
-      final today = _getTodayStr();
+      final today = overrideDate ?? _getTodayStr();
       tasksDueByNow = _getTasksDueByNow(appData, triggerTime, today);
       doneCount     = tasksDueByNow.where((t) => t['completed'] == true).length;
       totalDue      = tasksDueByNow.length;
@@ -203,7 +205,7 @@ class BackgroundService {
 
       // Save a lightweight pending entry so app shows the retry prompt
       if (prefs != null) {
-        final today = _getTodayStr();
+        final today = overrideDate ?? _getTodayStr();
         await _savePendingConversation(prefs, PrefKeys.pendingEgoConversations, {
           'id':          'conv_auto_bg_fallback_${DateTime.now().millisecondsSinceEpoch}',
           'type':        'auto_fallback',
@@ -247,7 +249,7 @@ class BackgroundService {
   }
 
   // ── Josh Auto Reminder ─────────────────────────────────────────
-  static Future<void> _runJoshAutoReminder(String triggerTime) async {
+  static Future<void> _runJoshAutoReminder(String triggerTime, {String? overrideDate}) async {
     SharedPreferences? prefs;
     String personality = 'energetic';
     List<Map<String, dynamic>> upcomingTasks = [];
@@ -266,7 +268,7 @@ class BackgroundService {
       final apiKey = _getAvailableApiKey(settings);
       personality  = settings['joshPersonality'] as String? ?? 'energetic';
 
-      final today = _getTodayStr();
+      final today = overrideDate ?? _getTodayStr();
       upcomingTasks = _getUpcomingTasks(appData, triggerTime, today);
       dailyScore    = _getDailyScore(appData, today);
 
@@ -331,7 +333,7 @@ class BackgroundService {
       );
 
       if (prefs != null) {
-        final today = _getTodayStr();
+        final today = overrideDate ?? _getTodayStr();
         await _savePendingConversation(prefs, PrefKeys.pendingJoshConversations, {
           'id':          'jc_auto_bg_fallback_${DateTime.now().millisecondsSinceEpoch}',
           'type':        'auto_fallback',
@@ -855,9 +857,157 @@ Detailed reminder + motivation (each upcoming task separately, connect to life g
   }
 
   /// Clear pending conversations after WebView has consumed them
+ /// Clear pending conversations after WebView has consumed them
   static Future<void> clearPendingConversations() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(PrefKeys.pendingEgoConversations);
     await prefs.remove(PrefKeys.pendingJoshConversations);
   }
+
+  // ── Schedule Management ────────────────────────────────────────
+
+  /// Save the currently scheduled ego/josh times so we can:
+  ///  a) cancel only those IDs next time (no 2880-call loop)
+  ///  b) detect which alarms missed when app opens
+  static Future<void> saveSchedule(
+      List<String> egoTimes, List<String> joshTimes) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      PrefKeys.scheduledAlarms,
+      jsonEncode({'ego': egoTimes, 'josh': joshTimes}),
+    );
+  }
+
+  /// Returns the stored schedule as {ego: [...], josh: [...]}.
+  static Future<Map<String, List<String>>> getSchedule() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw   = prefs.getString(PrefKeys.scheduledAlarms);
+    if (raw == null) return {'ego': [], 'josh': []};
+    try {
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      return {
+        'ego':  (data['ego']  as List<dynamic>? ?? []).cast<String>(),
+        'josh': (data['josh'] as List<dynamic>? ?? []).cast<String>(),
+      };
+    } catch (_) {
+      return {'ego': [], 'josh': []};
+    }
+  }
+
+  /// Stamp "now" as the last time the app was checked for missed alarms.
+  static Future<void> updateLastAlarmCheck() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+        PrefKeys.lastAlarmCheck, DateTime.now().millisecondsSinceEpoch);
+  }
+
+  /// Returns alarms that SHOULD have fired between the last check and now
+  /// but were NOT already handled by the background service.
+  /// These are the "missed" ones to process from the foreground queue.
+  static Future<List<Map<String, dynamic>>> getMissedAlarms() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final raw = prefs.getString(PrefKeys.scheduledAlarms);
+    if (raw == null) return [];
+    Map<String, dynamic> schedule;
+    try {
+      schedule = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return [];
+    }
+
+    final egoTimes  = (schedule['ego']  as List<dynamic>? ?? []).cast<String>();
+    final joshTimes = (schedule['josh'] as List<dynamic>? ?? []).cast<String>();
+    if (egoTimes.isEmpty && joshTimes.isEmpty) return [];
+
+    // Window: lastCheck → now (default: last 25h on first run)
+    final lastCheckMs = prefs.getInt(PrefKeys.lastAlarmCheck);
+    final lastCheck   = lastCheckMs != null
+        ? DateTime.fromMillisecondsSinceEpoch(lastCheckMs)
+        : DateTime.now().subtract(const Duration(hours: 25));
+    final now = DateTime.now();
+
+    // Build set of alarm slots already handled by background service
+    final handled = <String>{};
+    for (final key in [
+      PrefKeys.pendingEgoConversations,
+      PrefKeys.pendingJoshConversations,
+    ]) {
+      final isEgo = key == PrefKeys.pendingEgoConversations;
+      final json  = prefs.getString(key);
+      if (json == null) continue;
+      try {
+        final list = jsonDecode(json) as List<dynamic>;
+        for (final c in list) {
+          final m = c as Map<String, dynamic>;
+          final d = m['date']        as String? ?? '';
+          final t = m['triggerTime'] as String? ?? '';
+          if (d.isNotEmpty && t.isNotEmpty) {
+            handled.add('${isEgo ? 'ego' : 'josh'}_${d}_$t');
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Collect missed
+    final missed = <Map<String, dynamic>>[];
+    for (final time in egoTimes) {
+      _collectMissed(time, 'ego', lastCheck, now, handled, missed);
+    }
+    for (final time in joshTimes) {
+      _collectMissed(time, 'josh', lastCheck, now, handled, missed);
+    }
+
+    missed.sort((a, b) =>
+        (a['alarmTime'] as int).compareTo(b['alarmTime'] as int));
+    return missed;
+  }
+
+  static void _collectMissed(
+    String time,
+    String type,
+    DateTime lastCheck,
+    DateTime now,
+    Set<String> handled,
+    List<Map<String, dynamic>> missed,
+  ) {
+    final parts = time.split(':');
+    if (parts.length != 2) return;
+    final h = int.tryParse(parts[0]) ?? 0;
+    final m = int.tryParse(parts[1]) ?? 0;
+
+    // Check both yesterday and today (handles midnight crossings)
+    for (int dayOffset = -1; dayOffset <= 0; dayOffset++) {
+      final d    = now.add(Duration(days: dayOffset));
+      final fire = DateTime(d.year, d.month, d.day, h, m);
+      if (!fire.isAfter(lastCheck) || !fire.isBefore(now)) continue;
+
+      final dateStr =
+          '${fire.year}-${fire.month.toString().padLeft(2, '0')}-${fire.day.toString().padLeft(2, '0')}';
+      final key = '${type}_${dateStr}_$time';
+      if (handled.contains(key)) continue;
+
+      missed.add({
+        'type':      type,
+        'time':      time,
+        'date':      dateStr,
+        'alarmTime': fire.millisecondsSinceEpoch,
+      });
+    }
+  }
+
+  /// Public entry point called from the foreground queue.
+  /// Processes a single missed alarm (ego or josh) for a specific date.
+  static Future<void> handleMissedAlarm({
+    required String type,        // 'ego' or 'josh'
+    required String triggerTime, // 'HH:MM'
+    required String date,        // 'YYYY-MM-DD'
+  }) async {
+    if (type == 'ego') {
+      await _runEgoAutoCheck(triggerTime, overrideDate: date);
+    } else {
+      await _runJoshAutoReminder(triggerTime, overrideDate: date);
+    }
+  }
+}
 }
