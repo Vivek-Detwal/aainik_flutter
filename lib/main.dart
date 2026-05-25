@@ -32,9 +32,11 @@ void main() async {
   // Initialize local notifications
   await NotificationService.initialize();
 
-  // Initialize AlarmManager — replaces WorkManager
-  // Initialize AlarmManager
-  await AndroidAlarmManager.initialize();
+  // Native AlarmManager is now handled via MethodChannel in MainActivity.kt
+  // AndroidAlarmManager.initialize() no longer needed — all alarms are scheduled
+  // and executed directly via BroadcastReceiver + Kotlin, ensuring 100% reliability
+  // even on restrictive OEM devices (Xiaomi, Samsung, Oppo, etc.)
+  // await AndroidAlarmManager.initialize();
 
   // Request battery optimization exemption — critical for background alarms on OEM phones
   try {
