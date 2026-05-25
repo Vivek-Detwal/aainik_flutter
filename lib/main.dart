@@ -1,20 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:workmanager/workmanager.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'notification_service.dart';
 import 'background_service.dart';
 import 'webview_screen.dart';
 
-// ── WorkManager callback dispatcher ────────────────────────────
-// MUST be a top-level function (not inside a class)
-// This runs in a separate Dart isolate when WorkManager fires a task
+// ── AlarmManager callback dispatcher ────────────────────────────
+// MUST be a top-level function (not inside a class).
+// This runs in a separate Dart isolate when an alarm fires —
+// even when the app is completely killed.
+// The `id` parameter is the alarm ID we set in _scheduleAutoTask.
 @pragma('vm:entry-point')
-void callbackDispatcher() {
-  Workmanager().executeTask((taskName, inputData) async {
-    await BackgroundService.executeTask(taskName, inputData ?? {});
-    return Future.value(true);
-  });
+Future<void> alarmCallback(int id) async {
+  // Required for Flutter plugin calls in a background isolate
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.initialize();
+  await BackgroundService.handleAlarm(id);
 }
 
 void main() async {
@@ -29,11 +30,8 @@ void main() async {
   // Initialize local notifications
   await NotificationService.initialize();
 
-  // Initialize WorkManager
-  await Workmanager().initialize(
-    callbackDispatcher,
-    isInDebugMode: false,
-  );
+  // Initialize AlarmManager — replaces WorkManager
+  await AndroidAlarmManager.initialize();
 
   runApp(const AainikApp());
 }
