@@ -273,6 +273,67 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         }
       },
     );
+
+    // ── JS Handler: getEgoInbox ───────────────────────────────
+    controller.addJavaScriptHandler(
+      handlerName: 'getEgoInbox',
+      callback: (args) async {
+        try {
+          final items = await BackgroundService.getInboxItems(true);
+          return jsonEncode({'items': items});
+        } catch (e) {
+          return jsonEncode({'items': []});
+        }
+      },
+    );
+
+    // ── JS Handler: getJoshInbox ──────────────────────────────
+    controller.addJavaScriptHandler(
+      handlerName: 'getJoshInbox',
+      callback: (args) async {
+        try {
+          final items = await BackgroundService.getInboxItems(false);
+          return jsonEncode({'items': items});
+        } catch (e) {
+          return jsonEncode({'items': []});
+        }
+      },
+    );
+
+    // ── JS Handler: updateInboxItemResponse ──────────────────
+    controller.addJavaScriptHandler(
+      handlerName: 'updateInboxItemResponse',
+      callback: (args) async {
+        try {
+          final dataJson = args.isNotEmpty ? args[0] as String : null;
+          if (dataJson == null) return;
+          final data   = jsonDecode(dataJson) as Map<String, dynamic>;
+          final isEgo  = data['isEgo'] as bool? ?? true;
+          final itemId = data['itemId'] as String? ?? '';
+          final resp   = data['response'] as String? ?? '';
+          if (itemId.isNotEmpty && resp.isNotEmpty) {
+            await BackgroundService.updateInboxItemResponse(
+              isEgo: isEgo, itemId: itemId, response: resp,
+            );
+          }
+        } catch (e) {
+          debugPrint('[FlutterBridge] updateInboxItemResponse error: $e');
+        }
+      },
+    );
+
+    // ── JS Handler: getAppDataForInbox ────────────────────────
+    controller.addJavaScriptHandler(
+      handlerName: 'getAppDataForInbox',
+      callback: (args) async {
+        try {
+          final data = await BackgroundService.getAppDataForTime('');
+          return data != null ? jsonEncode(data) : jsonEncode({});
+        } catch (e) {
+          return jsonEncode({});
+        }
+      },
+    );
   }
 
   // ── Register WorkManager Tasks ─────────────────────────────
