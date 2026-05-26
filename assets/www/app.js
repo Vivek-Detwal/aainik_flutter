@@ -243,7 +243,11 @@ function getDefaultData() {
         { id: 'jt_2', time: '12:00', enabled: true }
       ],
       joshPrompt: '',                   // Editable auto prompt (empty = use default by personality)
-      lastJoshAutoFired: {}             // { 'YYYY-MM-DD_HH:MM': true }
+     lastJoshAutoFired: {},            // { 'YYYY-MM-DD_HH:MM': true }
+
+      // Telegram delivery settings (for Smart Notification feature)
+      telegramBotToken: '',      // Telegram bot token
+      telegramChatId: ''         // Telegram chat ID
     },
 
     // Account 4 adds:
@@ -407,9 +411,13 @@ function migrateData(old) {
   if (!merged.settings.dailyProgressTime)                  merged.settings.dailyProgressTime     = '21:30';
   if (!merged.settings.lastDailyProgressFired)             merged.settings.lastDailyProgressFired = {};
 
-  // Ego Mode: new fields
+ // Ego Mode: new fields
   if (merged.settings.egoLifeGoals    === undefined) merged.settings.egoLifeGoals    = '';
   if (merged.settings.egoNegativeWords === undefined) merged.settings.egoNegativeWords = '';
+
+  // Telegram delivery fields
+  if (merged.settings.telegramBotToken === undefined) merged.settings.telegramBotToken = '';
+  if (merged.settings.telegramChatId   === undefined) merged.settings.telegramChatId   = '';
 
   merged.version = DATA_VERSION;
   return merged;
@@ -3314,8 +3322,14 @@ function renderCoachSettings() {
   const lifeGoalsTA = document.getElementById('ego-life-goals');
   if (lifeGoalsTA) lifeGoalsTA.value = s.egoLifeGoals || '';
 
-  const negWordsTA = document.getElementById('ego-negative-words');
+ const negWordsTA = document.getElementById('ego-negative-words');
   if (negWordsTA) negWordsTA.value = s.egoNegativeWords || '';
+
+  // Telegram fields
+  const telTokenInp = document.getElementById('telegram-bot-token-input');
+  const telChatInp  = document.getElementById('telegram-chat-id-input');
+  if (telTokenInp) telTokenInp.value = s.telegramBotToken || '';
+  if (telChatInp)  telChatInp.value  = s.telegramChatId   || '';
 
   // Profile + badges
   renderProfileSection();
@@ -3385,6 +3399,15 @@ function updateEgoLifeGoals(val) {
 
 function updateEgoNegativeWords(val) {
   appData.settings.egoNegativeWords = val;
+  saveData();
+}
+
+function updateTelegramBotToken(val) {
+  appData.settings.telegramBotToken = val.trim();
+  saveData();
+}
+function updateTelegramChatId(val) {
+  appData.settings.telegramChatId = val.trim();
   saveData();
 }
 
@@ -6409,4 +6432,335 @@ function _capShouldFireOnDay(n, dayOfWeek, isWeekday, isWeekend) {
   if (r === 'weekends') return isWeekend;
   if (r === 'custom')   return (n.customDays || []).includes(dayOfWeek);
   return true;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   INBOX — EGO
+═══════════════════════════════════════════════════════════════ */
+
+let _currentEgoInnerTab = 'chat';
+let _egoInboxCache = null;
+
+function switchEgoInnerTab(tab) {
+  _currentEgoInnerTab = tab;
+  const chatDiv  = document.getElementById('ego-inner-chat');
+  const inboxDiv = document.getElementById('ego-inner-inbox');
+  const chatBtn  = document.getElementById('ego-tab-chat');
+  const inboxBtn = document.getElementById('ego-tab-inbox');
+  if (chatDiv)  chatDiv.classList.toggle('hidden',  tab !== 'chat');
+  if (inboxDiv) inboxDiv.classList.toggle('hidden', tab !== 'inbox');
+  if (chatBtn)  chatBtn.classList.toggle('active',  tab === 'chat');
+  if (inboxBtn) inboxBtn.classList.toggle('active', tab === 'inbox');
+  if (tab === 'inbox') renderEgoInbox();
+}
+
+async function renderEgoInbox() {
+  const container = document.getElementById('ego-inbox-list');
+  if (!container) return;
+  container.innerHTML = '<div class="coach-empty"><p>⏳ Loading inbox...</p></div>';
+
+  let items = [];
+  if (window._isFlutterApp && window._flutterGetEgoInbox) {
+    items = await window._flutterGetEgoInbox();
+  } else {
+    try {
+      const raw = localStorage.getItem('aainik_ego_inbox_v1');
+      if (raw) items = JSON.parse(raw);
+    } catch(_) {}
+  }
+
+  _egoInboxCache = items;
+
+  if (!items || items.length === 0) {
+    container.innerHTML = `
+      <div class="coach-empty">
+        <div class="coach-empty-icon">📬</div>
+        <h3>Inbox Khaali Hai</h3>
+        <p>Jab Ego ka auto-response time aayega, notifications yahan dikhenge.</p>
+        <p class="small muted">Auto-response set karo Settings → Ego → Auto Times mein</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = items.map((item, idx) => buildEgoInboxItemHTML(item, idx)).join('');
+}
+
+function buildEgoInboxItemHTML(item, idx) {
+  const timeStr   = item.triggerTime || '';
+  const dateStr   = item.date || '';
+  const hasResp   = !!(item.response);
+  const timeLabel = timeStr ? timeStr.replace(':', ' bje') : '?';
+  const dateLabel = dateStr ? new Date(dateStr).toLocaleDateString('en-IN', {day:'numeric', month:'short'}) : '';
+
+  const inboxText = `🧠 Ego ne tere liye ${timeLabel} ki progress pr response diya hai`;
+  const statusBadge = item.responseSentToTelegram
+    ? '<span class="inbox-badge sent">Telegram pe bheja ✅</span>'
+    : (hasResp ? '<span class="inbox-badge read">Generated ✅</span>' : '<span class="inbox-badge pending">Response pending</span>');
+
+  return `
+    <div class="inbox-item" id="ego-inbox-item-${idx}" data-inbox-id="${item.id}">
+      <div class="inbox-item-header">
+        <span class="inbox-time">⏰ ${timeLabel} · ${dateLabel}</span>
+        ${statusBadge}
+      </div>
+      <p class="inbox-text">${inboxText}</p>
+      <button class="inbox-read-btn" onclick="readEgoInboxResponse(${idx})">📖 Read ego's response</button>
+      <div id="ego-inbox-response-${idx}" class="inbox-response-block hidden"></div>
+    </div>`;
+}
+
+async function readEgoInboxResponse(idx) {
+  if (!_egoInboxCache || !_egoInboxCache[idx]) return;
+  const item    = _egoInboxCache[idx];
+  const respDiv = document.getElementById('ego-inbox-response-' + idx);
+  if (!respDiv) return;
+
+  if (item.response) {
+    respDiv.innerHTML = buildInboxResponseHTML(item.response);
+    respDiv.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.querySelector(`#ego-inbox-item-${idx} .inbox-read-btn`);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating...'; }
+  respDiv.innerHTML = '<div class="loading-dots">Ego soch raha hai...</div>';
+  respDiv.classList.remove('hidden');
+
+  try {
+    let data = appData;
+    if (window._isFlutterApp && window._flutterGetAppDataForInbox) {
+      const fresh = await window._flutterGetAppDataForInbox();
+      if (fresh && fresh.settings) data = fresh;
+    }
+
+    const s           = data.settings || {};
+    const personality = s.autoCoachPersonality || 'beast';
+    const lifeGoals   = s.egoLifeGoals || '';
+    const negWords    = s.egoNegativeWords || '';
+
+    const sysPrompt  = buildEgoSystemPromptForInbox(personality, lifeGoals, negWords);
+    const userPrompt = buildEgoUserContentForInbox(item.triggerTime, item.date, data);
+
+    const response = await callGeminiAPI(sysPrompt, userPrompt, 800);
+
+    if (response) {
+      item.response = response;
+      _egoInboxCache[idx] = item;
+      if (window._isFlutterApp && window._flutterUpdateInboxItemResponse) {
+        window._flutterUpdateInboxItemResponse(true, item.id, response);
+      }
+      respDiv.innerHTML = buildInboxResponseHTML(response);
+      if (btn) { btn.disabled = false; btn.textContent = '📖 Read ego\'s response'; }
+    } else {
+      respDiv.innerHTML = '<p class="error-text">Response generate nahi hua. Internet check karo.</p>';
+      if (btn) { btn.disabled = false; btn.textContent = '🔄 Retry'; }
+    }
+  } catch (e) {
+    respDiv.innerHTML = '<p class="error-text">Error: ' + e.message + '</p>';
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Retry'; }
+  }
+}
+
+function buildEgoSystemPromptForInbox(personality, lifeGoals, negWords) {
+  let tone;
+  if (personality === 'beast') {
+    tone = 'Tu ek brutal, no-excuse Hinglish life coach hai. Harsh, sarcastic if needed. Short punchy sentences. Hinglish. No sugarcoating. Incomplete tasks pe roast kar.';
+  } else if (personality === 'balanced') {
+    tone = 'Tu ek honest Hinglish coach hai. Direct but not cruel. Hindi aur English naturally mix. Balanced — appreciate effort, address failures.';
+  } else {
+    tone = 'Tu ek encouraging Hinglish coach hai. Warm but real. Positive framing.';
+  }
+  return `${tone}\nUSER KE LIFE GOALS: ${lifeGoals || 'Not set'}\nNEGATIVE LOG: ${negWords || 'Not set'}\nFormat: Line 1 = punchy headline (max 90 chars, Hinglish), blank line, then detailed reality check`;
+}
+
+function buildEgoUserContentForInbox(triggerTime, date, data) {
+  const tasks      = (data.tasks || []).filter(t => t.active !== false);
+  const history    = data.history || [];
+  const categories = data.categories || [];
+
+  const tasksDue = tasks.filter(t => {
+    const start = t.workingWindowStart || t.scheduledTime || '00:00';
+    return start <= triggerTime;
+  });
+
+  const lines = tasksDue.map(t => {
+    const cat   = categories.find(c => c.id === t.categoryId) || { name: '' };
+    const entry = history.find(h => h.taskId === t.id && h.date === date) || {};
+    const done  = entry.completed === true;
+    const wEnd  = t.workingWindowEnd || '';
+    const isUntracked = !done && wEnd && wEnd <= triggerTime;
+    const isPending   = !done && wEnd && wEnd > triggerTime;
+    const status = done ? `✅ DONE (effort ${entry.effortScore || 0}/10)`
+                 : isUntracked ? '⚠️ UNTRACKED (window closed)'
+                 : isPending   ? `⏳ PENDING (window open til ${wEnd})`
+                 : '❌ NOT DONE';
+    return `• [${cat.name}] ${t.name} — ${status} | Window: ${t.workingWindowStart || t.scheduledTime}→${wEnd} | Why: ${t.whyMatters || ''}`;
+  }).join('\n');
+
+  const done  = tasksDue.filter(t => (history.find(h => h.taskId === t.id && h.date === date) || {}).completed === true).length;
+  const total = tasksDue.length;
+
+  return `AUTO CHECK TIME: ${triggerTime} (Date: ${date})\nTasks due by ${triggerTime}:\n${lines || 'No tasks'}\n\nSummary: ${done}/${total} done\n\nFormat: Line 1 = punchy headline, blank line, full reality check`;
+}
+
+function buildInboxResponseHTML(response) {
+  const escaped = response
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  return `<div class="inbox-response-content">${escaped}</div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   INBOX — JOSH
+═══════════════════════════════════════════════════════════════ */
+
+let _currentJoshInnerTab = 'chat';
+let _joshInboxCache = null;
+
+function switchJoshInnerTab(tab) {
+  _currentJoshInnerTab = tab;
+  const chatDiv  = document.getElementById('josh-inner-chat');
+  const inboxDiv = document.getElementById('josh-inner-inbox');
+  const chatBtn  = document.getElementById('josh-tab-chat');
+  const inboxBtn = document.getElementById('josh-tab-inbox');
+  if (chatDiv)  chatDiv.classList.toggle('hidden',  tab !== 'chat');
+  if (inboxDiv) inboxDiv.classList.toggle('hidden', tab !== 'inbox');
+  if (chatBtn)  chatBtn.classList.toggle('active',  tab === 'chat');
+  if (inboxBtn) inboxBtn.classList.toggle('active', tab === 'inbox');
+  if (tab === 'inbox') renderJoshInbox();
+}
+
+async function renderJoshInbox() {
+  const container = document.getElementById('josh-inbox-list');
+  if (!container) return;
+  container.innerHTML = '<div class="coach-empty"><p>⏳ Loading inbox...</p></div>';
+
+  let items = [];
+  if (window._isFlutterApp && window._flutterGetJoshInbox) {
+    items = await window._flutterGetJoshInbox();
+  } else {
+    try {
+      const raw = localStorage.getItem('aainik_josh_inbox_v1');
+      if (raw) items = JSON.parse(raw);
+    } catch(_) {}
+  }
+
+  _joshInboxCache = items;
+
+  if (!items || items.length === 0) {
+    container.innerHTML = `
+      <div class="coach-empty">
+        <div class="coach-empty-icon">💪</div>
+        <h3>Inbox Khaali Hai</h3>
+        <p>Jab Josh ka auto-reminder aayega, notifications yahan dikhenge.</p>
+        <p class="small muted">Auto-reminder set karo Settings → Josh → Auto Times mein</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = items.map((item, idx) => buildJoshInboxItemHTML(item, idx)).join('');
+}
+
+function buildJoshInboxItemHTML(item, idx) {
+  const timeStr   = item.triggerTime || '';
+  const dateStr   = item.date || '';
+  const hasResp   = !!(item.response);
+  const timeLabel = timeStr ? timeStr.replace(':', ' bje') : '?';
+  const dateLabel = dateStr ? new Date(dateStr).toLocaleDateString('en-IN', {day:'numeric', month:'short'}) : '';
+
+  const inboxText = `💪 Josh ne tere liye ${timeLabel} ke tasks pr response diya hai`;
+  const statusBadge = item.responseSentToTelegram
+    ? '<span class="inbox-badge sent">Telegram pe bheja ✅</span>'
+    : (hasResp ? '<span class="inbox-badge read">Generated ✅</span>' : '<span class="inbox-badge pending">Response pending</span>');
+
+  return `
+    <div class="inbox-item" id="josh-inbox-item-${idx}" data-inbox-id="${item.id}">
+      <div class="inbox-item-header">
+        <span class="inbox-time">⏰ ${timeLabel} · ${dateLabel}</span>
+        ${statusBadge}
+      </div>
+      <p class="inbox-text">${inboxText}</p>
+      <button class="inbox-read-btn" onclick="readJoshInboxResponse(${idx})">📖 Read josh's response</button>
+      <div id="josh-inbox-response-${idx}" class="inbox-response-block hidden"></div>
+    </div>`;
+}
+
+async function readJoshInboxResponse(idx) {
+  if (!_joshInboxCache || !_joshInboxCache[idx]) return;
+  const item    = _joshInboxCache[idx];
+  const respDiv = document.getElementById('josh-inbox-response-' + idx);
+  if (!respDiv) return;
+
+  if (item.response) {
+    respDiv.innerHTML = buildInboxResponseHTML(item.response);
+    respDiv.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.querySelector(`#josh-inbox-item-${idx} .inbox-read-btn`);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating...'; }
+  respDiv.innerHTML = '<div class="loading-dots">Josh soch raha hai...</div>';
+  respDiv.classList.remove('hidden');
+
+  try {
+    let data = appData;
+    if (window._isFlutterApp && window._flutterGetAppDataForInbox) {
+      const fresh = await window._flutterGetAppDataForInbox();
+      if (fresh && fresh.settings) data = fresh;
+    }
+
+    const s           = data.settings || {};
+    const personality = s.joshPersonality || 'energetic';
+    const lifeGoals   = s.egoLifeGoals || '';
+    const negWords    = s.egoNegativeWords || '';
+
+    const sysPrompt  = buildJoshSystemPromptForInbox(personality);
+    const userPrompt = buildJoshUserContentForInbox(item.triggerTime, item.date, data, lifeGoals, negWords);
+
+    const response = await callGeminiAPI(sysPrompt, userPrompt, 600);
+
+    if (response) {
+      item.response = response;
+      _joshInboxCache[idx] = item;
+      if (window._isFlutterApp && window._flutterUpdateInboxItemResponse) {
+        window._flutterUpdateInboxItemResponse(false, item.id, response);
+      }
+      respDiv.innerHTML = buildInboxResponseHTML(response);
+      if (btn) { btn.disabled = false; btn.textContent = '📖 Read josh\'s response'; }
+    } else {
+      respDiv.innerHTML = '<p class="error-text">Response generate nahi hua. Internet check karo.</p>';
+      if (btn) { btn.disabled = false; btn.textContent = '🔄 Retry'; }
+    }
+  } catch (e) {
+    respDiv.innerHTML = '<p class="error-text">Error: ' + e.message + '</p>';
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Retry'; }
+  }
+}
+
+function buildJoshSystemPromptForInbox(personality) {
+  if (personality === 'beast') return JOSH_BEAST_PROMPT;
+  if (personality === 'calm')  return JOSH_CALM_PROMPT;
+  return JOSH_ENERGETIC_PROMPT;
+}
+
+function buildJoshUserContentForInbox(triggerTime, date, data, lifeGoals, negWords) {
+  const tasks      = (data.tasks || []).filter(t => t.active !== false);
+  const history    = data.history || [];
+  const categories = data.categories || [];
+
+  const pendingLines = tasks
+    .filter(t => {
+      const start = t.workingWindowStart || t.scheduledTime || '00:00';
+      const done  = (history.find(h => h.taskId === t.id && h.date === date) || {}).completed;
+      return start >= triggerTime && !done;
+    })
+    .map(t => {
+      const cat = categories.find(c => c.id === t.categoryId) || { name: '' };
+      return `• [${cat.name}] ${t.name} (${t.workingWindowStart || t.scheduledTime}→${t.workingWindowEnd || ''}) | Why: ${t.whyMatters || ''}`;
+    }).join('\n');
+
+  const done  = tasks.filter(t => (history.find(h => h.taskId === t.id && h.date === date) || {}).completed === true).length;
+  const total = tasks.length;
+
+  return `TERA-JOSH REMINDER — Time: ${triggerTime} (Date: ${date})\n\nUpcoming pending tasks:\n${pendingLines || 'Koi pending task nahi'}\n\nToday: ${done}/${total} done\n\nLIFE GOALS:\n${lifeGoals || 'Not set'}\n\nNEGATIVE WORDS (reframe into prove-them-wrong energy):\n${negWords || 'Not set'}`;
 }
