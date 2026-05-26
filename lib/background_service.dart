@@ -49,6 +49,12 @@ class BackgroundService {
   static const String _egoInboxKey  = 'aainik_ego_inbox_v1';
   static const String _joshInboxKey = 'aainik_josh_inbox_v1';
 
+  /// Get the saved schedule string
+  static Future<String?> getSchedule() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(PrefKeys.appData);
+  }
+
   /// Get all inbox items for ego or josh
   static Future<List<Map<String, dynamic>>> getInboxItems(bool isEgo) async {
     final prefs = await SharedPreferences.getInstance();
