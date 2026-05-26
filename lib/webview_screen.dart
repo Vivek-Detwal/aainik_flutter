@@ -332,10 +332,22 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   Future<void> _cancelAllAutoTasks() async {
     try {
       // Only cancel the alarm IDs we actually scheduled — NOT a 2880-call loop
-      final schedule  = await BackgroundService.getSchedule();
-      final egoTimes  = schedule['ego']  ?? [];
-      final joshTimes = schedule['josh'] ?? [];
+      
+      import 'dart:convert'; // Make sure this import is at the top of your file if it isn't already
 
+final scheduleStr = await BackgroundService.getSchedule();
+Map<String, dynamic> schedule = {};
+
+if (scheduleStr != null && scheduleStr.isNotEmpty) {
+  try {
+    schedule = jsonDecode(scheduleStr) as Map<String, dynamic>;
+  } catch (e) {
+    print('Error parsing schedule JSON: $e');
+  }
+}
+
+final egoTimes  = schedule['ego'] as List<dynamic>? ?? [];
+final joshTimes = schedule['josh'] as List<dynamic>? ?? [];
       for (final time in egoTimes) {
         await _alarmChannel.invokeMethod('cancel', {
           'alarmId': AlarmIds.forEgo(time),
