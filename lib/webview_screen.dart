@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -23,10 +22,6 @@ class WebViewScreen extends StatefulWidget {
 class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserver {
   InAppWebViewController? _webViewController;
   bool _isLoading = true;
-   // ── Missed-alarm notification queue ─────────────────────────
-  Timer? _queueTimer;
-  bool   _processingQueue = false;
-  final  List<Map<String, dynamic>> _notificationQueue = [];
 
   static const _alarmChannel = MethodChannel('aainik/alarm');
 
@@ -45,41 +40,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
   @override
   void dispose() {
-    _stopQueueProcessing();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      // App came to foreground — deliver pending AI conversations
-      _deliverPendingConversations();
-      // Check and queue any alarms missed while app was killed
-      _checkMissedAlarms();
-    }
-    if (state == AppLifecycleState.paused) {
-      // App going to background — pause the queue timer
-      _stopQueueProcessing();
-    }
-  }
-
-  Future<void> _deliverPendingConversations() async {
-    try {
-      final pending = await BackgroundService.getPendingConversations();
-      final ego = pending['egoConversations'] as List<dynamic>? ?? [];
-      final josh = pending['joshConversations'] as List<dynamic>? ?? [];
-
-      if (ego.isEmpty && josh.isEmpty) return;
-
-      final pendingJson = jsonEncode(pending);
-      await _webViewController?.evaluateJavascript(
-        source: 'if (typeof window._flutterInjectPendingConversations === "function") { '
-            'window._flutterInjectPendingConversations(${jsonEncode(pendingJson)}); }',
-      );
-    } catch (e) {
-      debugPrint('[WebViewScreen] deliverPendingConversations error: $e');
-    }
   }
 
   @override
@@ -118,11 +80,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
               },
               onLoadStop: (controller, url) {
                 setState(() => _isLoading = false);
-                // Deliver pending conversations + check missed alarms after page loads
-                Future.delayed(const Duration(milliseconds: 2000), () {
-                  _deliverPendingConversations();
-                  _checkMissedAlarms();
-                });
               },
               onPermissionRequest: (controller, request) async {
                 return PermissionResponse(
@@ -205,28 +162,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       },
     );
 
-    // ── JS Handler: requestPendingConversations ──────────────
-    controller.addJavaScriptHandler(
-      handlerName: 'requestPendingConversations',
-      callback: (args) async {
-        await _deliverPendingConversations();
-      },
-    );
-
-    // ── JS Handler: clearPendingConversations ────────────────
-    controller.addJavaScriptHandler(
-      handlerName: 'clearPendingConversations',
-      callback: (args) async {
-        await BackgroundService.clearPendingConversations();
-        debugPrint('[FlutterBridge] Pending conversations cleared');
-      },
-    );
-
     // ── FIX: JS Handler: showNotification ───────────────────
-    // Called by the window.Notification shim in flutter_bridge.js
-    // whenever JS does `new Notification(title, {body: ...})`.
-    // Routes the notification to Flutter's NotificationService
-    // so it shows as a real Android system notification.
     controller.addJavaScriptHandler(
       handlerName: 'showNotification',
       callback: (args) async {
@@ -238,7 +174,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
           final title = (data['title'] as String?) ?? 'Aainik';
           final body = (data['body'] as String?) ?? '';
 
-          // Use a time-based ID to avoid collisions between notifications
           final id = DateTime.now().millisecondsSinceEpoch % 99999;
 
           await NotificationService.showTaskNotification(
@@ -254,9 +189,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     );
 
     // ── FIX: JS Handler: requestNotificationPermission ──────
-    // Called by flutter_bridge.js shim when JS code calls
-    // Notification.requestPermission(). Ensures Flutter has
-    // actually been granted notification permission on Android 13+.
     controller.addJavaScriptHandler(
       handlerName: 'requestNotificationPermission',
       callback: (args) async {
@@ -346,24 +278,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     final joshTimes = (config['joshTimes'] as List<dynamic>? ?? [])
         .cast<Map<String, dynamic>>();
 
-    // Save new schedule BEFORE cancelling old one
-    final newEgoTimes = egoEnabled
-        ? egoTimes
-            .map((e) => e['time'] as String? ?? '')
-            .where((t) => t.isNotEmpty)
-            .toList()
-        : <String>[];
-    final newJoshTimes = joshEnabled
-        ? joshTimes
-            .map((e) => e['time'] as String? ?? '')
-            .where((t) => t.isNotEmpty)
-            .toList()
-        : <String>[];
-
     await _cancelAllAutoTasks();
-    await BackgroundService.saveSchedule(newEgoTimes, newJoshTimes);
-    // Stamp now — alarms scheduled from this point forward
-    await BackgroundService.updateLastAlarmCheck();
 
     if (egoEnabled) {
       for (final entry in egoTimes) {
@@ -437,76 +352,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
           '[FlutterBridge] Cancelled ${egoTimes.length + joshTimes.length} alarms');
     } catch (e) {
       debugPrint('[FlutterBridge] cancelAllAutoTasks error: $e');
-    }
-  }
-
-  // ── Missed Alarm Detection & Queue System ─────────────────────
-
-  void _stopQueueProcessing() {
-    _queueTimer?.cancel();
-    _queueTimer = null;
-    _processingQueue = false;
-  }
-
-  Future<void> _checkMissedAlarms() async {
-    try {
-      final missed = await BackgroundService.getMissedAlarms();
-      await BackgroundService.updateLastAlarmCheck();
-
-      if (missed.isEmpty) return;
-
-      debugPrint('[WebViewScreen] ${missed.length} missed alarms → queuing');
-
-      // Add to back of queue (preserves any already-queued items)
-      _notificationQueue.addAll(missed.cast<Map<String, dynamic>>());
-
-      // Start processing if not already running
-      if (!_processingQueue) _startQueueProcessing();
-    } catch (e) {
-      debugPrint('[WebViewScreen] checkMissedAlarms error: $e');
-    }
-  }
-
-  void _startQueueProcessing() {
-    if (_processingQueue || _notificationQueue.isEmpty) return;
-    _processingQueue = true;
-    debugPrint(
-        '[WebViewScreen] Queue started — ${_notificationQueue.length} items');
-    _processNextQueueItem();
-  }
-
-  Future<void> _processNextQueueItem() async {
-    if (_notificationQueue.isEmpty) {
-      _processingQueue = false;
-      return;
-    }
-
-    final item        = _notificationQueue.removeAt(0);
-    final type        = item['type']  as String? ?? '';
-    final triggerTime = item['time']  as String? ?? '';
-    final date        = item['date']  as String? ?? '';
-
-    debugPrint(
-        '[WebViewScreen] Queue: processing $type @ $triggerTime ($date) — ${_notificationQueue.length} left');
-
-    try {
-      await BackgroundService.handleMissedAlarm(
-        type:        type,
-        triggerTime: triggerTime,
-        date:        date,
-      );
-    } catch (e) {
-      debugPrint('[WebViewScreen] processNextQueueItem error: $e');
-    }
-
-    if (_notificationQueue.isNotEmpty) {
-      // 62 seconds between items — Gemini limit is 5 req/min
-      debugPrint('[WebViewScreen] Next item in 62s');
-      _queueTimer =
-          Timer(const Duration(seconds: 62), _processNextQueueItem);
-    } else {
-      _processingQueue = false;
-      debugPrint('[WebViewScreen] Queue empty — all done');
     }
   }
 }
