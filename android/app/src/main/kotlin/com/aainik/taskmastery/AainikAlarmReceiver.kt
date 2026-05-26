@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 
@@ -21,7 +22,33 @@ class AainikAlarmReceiver : BroadcastReceiver() {
         const val EXTRA_MINUTE = "minute"
         const val EXTRA_ALARM_ID = "alarm_id"
         const val CHANNEL_EGO  = "aainik-ego"
-        const val CHANNEL_JOSH = "aainik-josh"
+        const val CHANNEL_JOSH  = "aainik-josh"
+
+        private val EGO_NOTIF_TEMPLATES = arrayOf(
+            "🧠 Ego ne teri {TIME} bje tk ki progress dekh li hai • 'Send me ego\\'s response' pe click kar — main tujhe pura response telegram pe bhejta hun",
+            "🧠 {TIME} ka Ego check ho chuka — click karo, main poora analysis telegram pe bhejta hun",
+            "🧠 Bhai {TIME} ho gaya — Ego ki nazar mein hai sab kuch • ek click se telegram pe pura response",
+            "🧠 Ego alert {TIME}: tera progress dekh liya — response manga lo, click karo",
+            "🧠 {TIME} wala Ego observation complete — telegram pe bhejun? click karo",
+            "🧠 Real talk from Ego — {TIME} check complete • click for full response on telegram",
+            "🧠 {TIME}: Ego ne tera kaam dekh liya — poora feedback telegram pe aayega, click karo",
+            "🧠 Ego ka {TIME} checkpoint ready — ek click pe telegram pe pura jawab",
+            "🧠 {TIME} check in: Ego ke paas tera full analysis hai — telegram pe maango, click karo",
+            "🧠 {TIME} — Ego teri performance pe nazar rakh raha tha • response lene ke liye click karo"
+        )
+
+        private val JOSH_NOTIF_TEMPLATES = arrayOf(
+            "💪 Josh ne tere liye {TIME} pe kuchh bheja hai • 'Send me josh\\'s response' pr click kar — main tujhe telegram pr pura response bhejta hun",
+            "💪 {TIME} wala Josh ka message ready hai — click karo main telegram pe deliver kar deta hun",
+            "💪 Josh tera wait kar raha tha {TIME} pe — abhi click karo full motivation telegram pe pao",
+            "💪 {TIME} reminder: Josh ne tera plan dekha — click karo, telegram pe fire mile",
+            "💪 Josh ka {TIME} session tayaar hai — bhai click kar aur josh feel kar telegram pe",
+            "💪 {TIME}: Josh has your back — click for full motivation on telegram",
+            "💪 Josh ne {TIME} pe teri preparation dekhi — poora response telegram pe manga lo",
+            "💪 {TIME} Josh check-in — full hype on the way, click karo aur telegram pe pao",
+            "💪 Josh ka {TIME} wala jawab ready hai — ek click pe telegram pe aayega, sun lo",
+            "💪 {TIME} — Josh poori fire ke saath ready tha • click for full response on telegram"
+        )
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -49,8 +76,8 @@ class AainikAlarmReceiver : BroadcastReceiver() {
         val prefs    = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
         val dataJson = prefs.getString("flutter.aainik_app_data_v1", null)
 
-        if (isEgo) showEgoNotification(context, timeStr, dataJson, alarmId)
-        else       showJoshNotification(context, timeStr, dataJson, alarmId)
+        if (isEgo) showEgoNotification(context, hour, minute, timeStr, dataJson, alarmId)
+        else       showJoshNotification(context, hour, minute, timeStr, dataJson, alarmId)
     }
 
     // ── Reschedule for tomorrow ────────────────────────────────
@@ -129,139 +156,147 @@ class AainikAlarmReceiver : BroadcastReceiver() {
 
     // ── Ego Notification ───────────────────────────────────────
     private fun showEgoNotification(
-        context: Context, timeStr: String, dataJson: String?, alarmId: Int
+        context: Context, hour: Int, minute: Int, timeStr: String, dataJson: String?, alarmId: Int
     ) {
         ensureChannels(context)
 
-        var title = "🧠 Ego Reality Check — $timeStr"
-        var body  = "App khol — Ego ka full report ready hai!"
-
+        // Check if ego auto-coach is enabled
         if (dataJson != null) {
             try {
                 val data     = JSONObject(dataJson)
                 val settings = data.optJSONObject("settings") ?: JSONObject()
                 if (!settings.optBoolean("autoCoachEnabled", false)) return
-
-                val personality = settings.optString("autoCoachPersonality", "beast")
-                val today       = todayStr()
-                val tasks       = data.optJSONArray("tasks")
-                val history     = data.optJSONArray("history")
-                var done = 0; var total = 0
-                val pendingNames = mutableListOf<String>()
-
-                if (tasks != null && history != null) {
-                    for (i in 0 until tasks.length()) {
-                        val t = tasks.getJSONObject(i)
-                        if (!t.optBoolean("active", true)) continue
-                        val start = t.optString("workingWindowStart",
-                            t.optString("scheduledTime", "00:00"))
-                        if (start > timeStr) continue
-                        total++
-                        val taskId = t.optString("id", "")
-                        var taskDone = false
-                        for (j in 0 until history.length()) {
-                            val h = history.getJSONObject(j)
-                            if (h.optString("taskId") == taskId && h.optString("date") == today) {
-                                taskDone = h.optBoolean("completed", false); break
-                            }
-                        }
-                        if (taskDone) done++ else pendingNames.add(t.optString("name", ""))
-                    }
-                }
-
-                val pct = if (total > 0) done * 100 / total else 0
-                title = when {
-                    personality == "beast" && pct == 0 && total > 0 ->
-                        "🧠 0% done bhai?! ($done/$total) — koi bahaana nahi!"
-                    personality == "beast" && pct >= 80 ->
-                        "🧠 $pct% — acha hai! App khol full report ke liye"
-                    personality == "beast" ->
-                        "🧠 Sirf $pct%? ($done/$total done) — Ego wait kar raha hai!"
-                    personality == "balanced" ->
-                        "🧠 Reality Check $timeStr — $done/$total tasks ($pct%)"
-                    else ->
-                        "🧠 Tu aacha kar raha hai — $done/$total done! App khol 💜"
-                }
-                body = buildEgoBody(pendingNames, done, total, pct, personality)
-            } catch (e: Exception) { /* use defaults */ }
+            } catch (e: Exception) { /* proceed with defaults */ }
         }
 
-        notify(context, 8000000 + alarmId, title, body, CHANNEL_EGO, "Tap to open Tera-Ego")
-    }
+        // Pick template using alarmId % 10
+        val templateIdx  = Math.abs(alarmId % 10)
+        val templateText = EGO_NOTIF_TEMPLATES[templateIdx].replace("{TIME}", timeStr)
 
-    private fun buildEgoBody(
-        pendingNames: List<String>, done: Int, total: Int, pct: Int, personality: String
-    ): String {
-        val parts = mutableListOf<String>()
-        if (pendingNames.isNotEmpty()) {
-            val shown = pendingNames.take(3).joinToString(", ")
-            val extra = if (pendingNames.size > 3) " +${pendingNames.size - 3} aur" else ""
-            parts.add("⏳ Abhi baki: $shown$extra")
+        // Generate inbox ID and save item to SharedPreferences
+        val inboxId = "ego_inbox_${todayStr()}_${timeStr.replace(":", "")}_$alarmId"
+        addToInbox(context, true, inboxId, timeStr, templateText)
+
+        // Action button PendingIntent (fires NotificationActionReceiver — no app open needed)
+        val actionIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+            action = NotificationActionReceiver.ACTION_SEND_EGO_RESPONSE
+            putExtra(NotificationActionReceiver.EXTRA_HOUR, hour)
+            putExtra(NotificationActionReceiver.EXTRA_MINUTE, minute)
+            putExtra(NotificationActionReceiver.EXTRA_ALARM_ID, alarmId)
+            putExtra(NotificationActionReceiver.EXTRA_INBOX_ID, inboxId)
         }
-        if (total > 0) parts.add("✅ Done: $done/$total ($pct%)")
-        parts.add(when (personality) {
-            "beast"    -> "App khol — Ego full roast de raha hai, koi bahaana nahi!"
-            "balanced" -> "App khol — Ego full analysis aur next steps ready hain!"
-            else       -> "App khol — Ego tujhe encourage karna chahta hai! 💜"
-        })
-        return parts.joinToString("\n")
+        val actionPi = PendingIntent.getBroadcast(
+            context, alarmId + 10000, actionIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Tap-on-notification opens the app
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val pi = PendingIntent.getActivity(
+            context, 8000000 + alarmId, launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notif = NotificationCompat.Builder(context, CHANNEL_EGO)
+            .setSmallIcon(android.R.drawable.ic_popup_reminder)
+            .setContentTitle("🧠 Ego Reality Check — $timeStr")
+            .setContentText(templateText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(templateText))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .setTicker("Ego Reality Check")
+            .addAction(0, "Send me ego's response", actionPi)
+            .build()
+
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(8000000 + alarmId, notif)
     }
 
     // ── Josh Notification ──────────────────────────────────────
     private fun showJoshNotification(
-        context: Context, timeStr: String, dataJson: String?, alarmId: Int
+        context: Context, hour: Int, minute: Int, timeStr: String, dataJson: String?, alarmId: Int
     ) {
         ensureChannels(context)
 
-        var title = "💪 Josh Reminder — $timeStr"
-        var body  = "App khol — Josh aaj ke tasks ke saath tera wait kar raha hai!"
-
+        // Check if josh auto is enabled
         if (dataJson != null) {
             try {
                 val data     = JSONObject(dataJson)
                 val settings = data.optJSONObject("settings") ?: JSONObject()
                 if (!settings.optBoolean("joshAutoEnabled", false)) return
-
-                val personality  = settings.optString("joshPersonality", "energetic")
-                val today        = todayStr()
-                val tasks        = data.optJSONArray("tasks")
-                val history      = data.optJSONArray("history")
-                val upcoming     = mutableListOf<String>()
-                var done = 0; var total = 0
-
-                if (tasks != null && history != null) {
-                    for (i in 0 until tasks.length()) {
-                        val t = tasks.getJSONObject(i)
-                        if (!t.optBoolean("active", true)) continue
-                        val start  = t.optString("workingWindowStart",
-                            t.optString("scheduledTime", "00:00"))
-                        val taskId = t.optString("id", "")
-                        total++
-                        var taskDone = false
-                        for (j in 0 until history.length()) {
-                            val h = history.getJSONObject(j)
-                            if (h.optString("taskId") == taskId && h.optString("date") == today) {
-                                taskDone = h.optBoolean("completed", false); break
-                            }
-                        }
-                        if (taskDone) done++
-                        if (start >= timeStr && !taskDone) upcoming.add(t.optString("name", ""))
-                    }
-                }
-
-                title = when (personality) {
-                    "beast" -> "💪 CHAL UTH JA — $timeStr | ${upcoming.size} tasks abhi baki!"
-                    "calm"  -> "💪 Josh ka $timeStr Reminder — ek ek kaam, aage badh"
-                    else    -> "💪 Josh reminder — $timeStr | Tu kar sakta hai! 🔥"
-                }
-                body = if (upcoming.isNotEmpty())
-                    "📋 ${upcoming.take(4).joinToString(" • ")}\nAaj: $done/$total done — App khol!"
-                else
-                    "Sab tasks ho gaye — App khol, kal ka plan banao! 🎯"
-            } catch (e: Exception) { /* use defaults */ }
+            } catch (e: Exception) { /* proceed with defaults */ }
         }
 
-        notify(context, 9000000 + alarmId, title, body, CHANNEL_JOSH, "Tap to open Tera-Josh")
+        // Pick template using alarmId % 10
+        val templateIdx  = Math.abs(alarmId % 10)
+        val templateText = JOSH_NOTIF_TEMPLATES[templateIdx].replace("{TIME}", timeStr)
+
+        // Generate inbox ID and save item to SharedPreferences
+        val inboxId = "josh_inbox_${todayStr()}_${timeStr.replace(":", "")}_$alarmId"
+        addToInbox(context, false, inboxId, timeStr, templateText)
+
+        // Action button PendingIntent
+        val actionIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+            action = NotificationActionReceiver.ACTION_SEND_JOSH_RESPONSE
+            putExtra(NotificationActionReceiver.EXTRA_HOUR, hour)
+            putExtra(NotificationActionReceiver.EXTRA_MINUTE, minute)
+            putExtra(NotificationActionReceiver.EXTRA_ALARM_ID, alarmId)
+            putExtra(NotificationActionReceiver.EXTRA_INBOX_ID, inboxId)
+        }
+        val actionPi = PendingIntent.getBroadcast(
+            context, alarmId + 10000, actionIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Tap-on-notification opens the app
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val pi = PendingIntent.getActivity(
+            context, 9000000 + alarmId, launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notif = NotificationCompat.Builder(context, CHANNEL_JOSH)
+            .setSmallIcon(android.R.drawable.ic_popup_reminder)
+            .setContentTitle("💪 Josh Reminder — $timeStr")
+            .setContentText(templateText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(templateText))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .setTicker("Josh Reminder")
+            .addAction(0, "Send me josh's response", actionPi)
+            .build()
+
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(9000000 + alarmId, notif)
+    }
+
+    // ── Add item to inbox in SharedPreferences ─────────────────
+    private fun addToInbox(context: Context, isEgo: Boolean, inboxId: String, timeStr: String, notifText: String) {
+        try {
+            val prefs = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            val key   = if (isEgo) "flutter.aainik_ego_inbox_v1" else "flutter.aainik_josh_inbox_v1"
+            val existing = prefs.getString(key, "[]") ?: "[]"
+            val arr  = JSONArray(existing)
+            val item = JSONObject()
+            item.put("id",                   inboxId)
+            item.put("type",                 if (isEgo) "ego" else "josh")
+            item.put("triggerTime",          timeStr)
+            item.put("date",                 todayStr())
+            item.put("timestamp",            System.currentTimeMillis())
+            item.put("notifTitle",           notifText)
+            item.put("response",             JSONObject.NULL)
+            item.put("responseSentToTelegram", false)
+            item.put("responseReadAt",       JSONObject.NULL)
+
+            // Prepend newest first, keep max 30
+            val newArr = JSONArray()
+            newArr.put(item)
+            for (i in 0 until minOf(arr.length(), 29)) newArr.put(arr.get(i))
+
+            prefs.edit().putString(key, newArr.toString()).apply()
+        } catch (e: Exception) { /* ignore */ }
     }
 
     // ── Helpers ────────────────────────────────────────────────
