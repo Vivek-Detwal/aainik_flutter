@@ -287,6 +287,52 @@
     }, 1500); // Small delay to let appData load first
   });
 
+  // ── Inbox Bridge Functions ────────────────────────────────────────────
+
+  // Get ego inbox items from Flutter SharedPreferences
+  window._flutterGetEgoInbox = async function () {
+    try {
+      const result = await window.flutter_inappwebview.callHandler('getEgoInbox');
+      const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+      return parsed.items || [];
+    } catch (e) {
+      console.warn('[FlutterBridge] getEgoInbox error:', e);
+      return [];
+    }
+  };
+
+  // Get josh inbox items from Flutter SharedPreferences
+  window._flutterGetJoshInbox = async function () {
+    try {
+      const result = await window.flutter_inappwebview.callHandler('getJoshInbox');
+      const parsed = typeof result === 'string' ? JSON.parse(result) : result;
+      return parsed.items || [];
+    } catch (e) {
+      console.warn('[FlutterBridge] getJoshInbox error:', e);
+      return [];
+    }
+  };
+
+  // Save generated response back to inbox item in SharedPreferences
+  window._flutterUpdateInboxItemResponse = function (isEgo, itemId, response) {
+    try {
+      callFlutter('updateInboxItemResponse', JSON.stringify({ isEgo, itemId, response }));
+    } catch (e) {
+      console.warn('[FlutterBridge] updateInboxItemResponse error:', e);
+    }
+  };
+
+  // Get full appData from SharedPreferences for building Gemini prompt in inbox
+  window._flutterGetAppDataForInbox = async function () {
+    try {
+      const result = await window.flutter_inappwebview.callHandler('getAppDataForInbox');
+      return typeof result === 'string' ? JSON.parse(result) : result;
+    } catch (e) {
+      console.warn('[FlutterBridge] getAppDataForInbox error:', e);
+      return null;
+    }
+  };
+
   console.log('[FlutterBridge] Initialized successfully');
 
 })();
