@@ -106,7 +106,7 @@
         <!-- ─── NotificationActionReceiver — handles notification button taps ─── -->
         <receiver
             android:name=".NotificationActionReceiver"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="com.aainik.taskmastery.SEND_EGO_RESPONSE" />
                 <action android:name="com.aainik.taskmastery.SEND_JOSH_RESPONSE" />
