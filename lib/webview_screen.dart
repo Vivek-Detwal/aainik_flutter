@@ -6,6 +6,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'background_service.dart';
 import 'notification_service.dart';
+import 'dart:convert'; // Make sure this import is at the top of your file if it isn't already
+
 
 /// ─────────────────────────────────────────────────────────────
 /// WebViewScreen
@@ -333,8 +335,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     try {
       // Only cancel the alarm IDs we actually scheduled — NOT a 2880-call loop
       
-      import 'dart:convert'; // Make sure this import is at the top of your file if it isn't already
-
+     
 final scheduleStr = await BackgroundService.getSchedule();
 Map<String, dynamic> schedule = {};
 
