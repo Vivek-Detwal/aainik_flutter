@@ -3116,3 +3116,87 @@ body.light body::before {
 }
 
 /* Remove old nav active override conflicts */
+/* ── Inbox Styles ────────────────────────────────────────── */
+.inbox-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+.inbox-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.inbox-tab.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+.inbox-item {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 10px;
+}
+.inbox-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.inbox-time {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.inbox-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+.inbox-badge.pending { background: rgba(253,203,110,0.15); color: #FDCB6E; }
+.inbox-badge.sent    { background: rgba(85,239,196,0.15);  color: #55EFC4; }
+.inbox-badge.read    { background: rgba(162,155,254,0.15); color: #A29BFE; }
+.inbox-text {
+  font-size: 14px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+.inbox-read-btn {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 4px;
+}
+.inbox-read-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.inbox-response-block {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border-left: 3px solid var(--primary);
+}
+.inbox-response-content {
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+.loading-dots {
+  color: var(--text-muted);
+  font-size: 13px;
+  animation: pulse 1.5s infinite;
+}
