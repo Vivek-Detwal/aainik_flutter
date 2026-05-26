@@ -857,7 +857,6 @@ Detailed reminder + motivation (each upcoming task separately, connect to life g
   }
 
   /// Clear pending conversations after WebView has consumed them
- /// Clear pending conversations after WebView has consumed them
   static Future<void> clearPendingConversations() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(PrefKeys.pendingEgoConversations);
@@ -1009,5 +1008,56 @@ Detailed reminder + motivation (each upcoming task separately, connect to life g
       await _runJoshAutoReminder(triggerTime, overrideDate: date);
     }
   }
-}
 
+  // ── Inbox Operations ───────────────────────────────────────────
+  static const String _egoInboxKey  = 'aainik_ego_inbox_v1';
+  static const String _joshInboxKey = 'aainik_josh_inbox_v1';
+
+  /// Get all inbox items for ego or josh
+  static Future<List<Map<String, dynamic>>> getInboxItems(bool isEgo) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key   = isEgo ? _egoInboxKey : _joshInboxKey;
+    final json  = prefs.getString(key);
+    if (json == null) return [];
+    try {
+      return (jsonDecode(json) as List<dynamic>).cast<Map<String, dynamic>>();
+    } catch (_) { return []; }
+  }
+
+  /// Update an inbox item's response field (after in-app generation)
+  static Future<void> updateInboxItemResponse({
+    required bool isEgo,
+    required String itemId,
+    required String response,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key   = isEgo ? _egoInboxKey : _joshInboxKey;
+    final json  = prefs.getString(key);
+    if (json == null) return;
+    try {
+      final list = (jsonDecode(json) as List<dynamic>).cast<Map<String, dynamic>>();
+      for (final item in list) {
+        if (item['id'] == itemId) {
+          item['response']       = response;
+          item['responseReadAt'] = DateTime.now().millisecondsSinceEpoch;
+          break;
+        }
+      }
+      await prefs.setString(key, jsonEncode(list));
+    } catch (_) {}
+  }
+
+  /// Clear all inbox items (optional utility)
+  static Future<void> clearInbox(bool isEgo) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(isEgo ? _egoInboxKey : _joshInboxKey);
+  }
+
+  /// Get the raw app data (used by JS to build Gemini prompt for inbox responses)
+  static Future<Map<String, dynamic>?> getAppDataForTime(String triggerTime) async {
+    final prefs    = await SharedPreferences.getInstance();
+    final dataJson = prefs.getString(PrefKeys.appData);
+    if (dataJson == null) return null;
+    try { return jsonDecode(dataJson) as Map<String, dynamic>; } catch (_) { return null; }
+  }
+}
