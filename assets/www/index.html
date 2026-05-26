@@ -265,6 +265,14 @@
     ═══════════════════════════════════════ -->
     <div id="coach-panel-ego" class="coach-panel">
 
+      <!-- Inbox Sub-Tabs -->
+      <div class="inbox-tabs">
+        <button id="ego-tab-chat" class="inbox-tab active" onclick="switchEgoInnerTab('chat')">💬 Chat</button>
+        <button id="ego-tab-inbox" class="inbox-tab" onclick="switchEgoInnerTab('inbox')">📬 Inbox</button>
+      </div>
+
+      <div id="ego-inner-chat">
+
       <!-- No API key warning -->
       <div id="coach-no-key-banner" class="coach-no-key hidden">
         <p>⚙️ Gemini API key set nahi hai!</p>
@@ -335,12 +343,26 @@
         </div>
       </div>
 
+      </div><!-- /ego-inner-chat -->
+
+      <div id="ego-inner-inbox" class="hidden">
+        <div id="ego-inbox-list"><div class="coach-empty"><p>Loading inbox...</p></div></div>
+      </div>
+
     </div><!-- /coach-panel-ego -->
 
     <!-- ══════════════════════════════════════
          TERA-JOSH PANEL
     ═══════════════════════════════════════ -->
     <div id="coach-panel-josh" class="coach-panel hidden">
+
+      <!-- Inbox Sub-Tabs -->
+      <div class="inbox-tabs">
+        <button id="josh-tab-chat" class="inbox-tab active" onclick="switchJoshInnerTab('chat')">💬 Chat</button>
+        <button id="josh-tab-inbox" class="inbox-tab" onclick="switchJoshInnerTab('inbox')">📬 Inbox</button>
+      </div>
+
+      <div id="josh-inner-chat">
 
       <!-- Josh chat messages -->
       <div class="coach-chat-wrap" id="josh-chat-wrap">
@@ -372,6 +394,12 @@
           </button>
           <button class="btn-secondary" onclick="clearJoshConversations()">🗑️</button>
         </div>
+      </div>
+
+      </div><!-- /josh-inner-chat -->
+
+      <div id="josh-inner-inbox" class="hidden">
+        <div id="josh-inbox-list"><div class="coach-empty"><p>Loading inbox...</p></div></div>
       </div>
 
     </div><!-- /coach-panel-josh -->
@@ -769,6 +797,26 @@
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn-secondary" onclick="resetJoshPrompt()" style="flex:1">↺ Default Restore</button>
           <button class="btn-primary" onclick="saveJoshPrompt()" style="flex:1">💾 Save Prompt</button>
+        </div>
+      </div>
+
+      <!-- ── Telegram Delivery Settings ── -->
+      <div class="settings-section">
+        <div class="settings-section-title">📲 Telegram Delivery</div>
+        <div class="setting-desc" style="padding:0 0 12px;color:var(--text-secondary)">
+          Notification pe "Send response" click karne ke baad Ego/Josh ka response yahan aayega
+        </div>
+        <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <div class="setting-label">Telegram Bot Token</div>
+          <input type="text" id="telegram-bot-token-input" class="form-input"
+                 placeholder="123456789:ABCdef..."
+                 oninput="updateTelegramBotToken(this.value)" autocomplete="off">
+        </div>
+        <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px;margin-top:8px">
+          <div class="setting-label">Your Telegram Chat ID</div>
+          <input type="text" id="telegram-chat-id-input" class="form-input"
+                 placeholder="e.g. 987654321"
+                 oninput="updateTelegramChatId(this.value)" autocomplete="off">
         </div>
       </div>
 
